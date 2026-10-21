@@ -26,7 +26,7 @@ if (-not $PackageProject) {
         $dir = Split-Path -Parent $repo
         for ($i = 0; $i -lt 4 -and $dir; $i = $i + 1) {
             $hit = ''
-            foreach ($name in @('zan-lang', 'zan-head')) {
+            foreach ($name in @('zan-lang')) {
                 $c = Join-Path $dir $name
                 if (Test-Path (Join-Path $c 'packages')) { $hit = $c; break }
             }
