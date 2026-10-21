@@ -74,6 +74,14 @@ public class RailGame : IGuiHostLoop {
     public int crashTotal;
     // 调试钩子：直接摆出结算画面（截图/验收用）。
     public bool resultPreview;
+    // 本轮新增：画面反馈状态。
+    public List<RailPuff> puffs;      // 机车蒸汽
+    public int puffTimer;              // 蒸汽发射计时（毫秒）
+    public int flashTimer;             // 警示闪烁剩余帧数（0 = 不闪）
+    public int flashKind;              // 1 = 送错站台 2 = 脱轨
+    public int levelSeconds;           // 本关时限（表盘算占比用）
+    public int pressedAction;          // 当前按下的按钮动作码（-1 = 无）
+    public bool freeze;                // 调试钩子：冻结机车（截图对比朝向用）
 
     public RailGame() {
         this.Init(true);
@@ -86,6 +94,7 @@ public class RailGame : IGuiHostLoop {
 
     void Init(bool withAudio) {
         this.buttons = new List<RailButton>();
+        this.puffs = new List<RailPuff>();
         this.view = new RailView();
         this.shell = new GameShell();
         this.rng = Rng.Seed(77120261021L);
@@ -109,6 +118,9 @@ public class RailGame : IGuiHostLoop {
         this.hoverBranch = -1;
         this.wrongCount = 0;
         this.bonusTotal = 0;
+        this.pressedAction = -1;
+        this.flashTimer = 0;
+        this.flashKind = 0;
         this.view.LoadAssets();
     }
 
@@ -199,6 +211,14 @@ public class RailGame : IGuiHostLoop {
 
     public void Start(GuiHost h) {
         this.host = h;
+        // 皮肤包：铁路风（机油黑 + 黄铜 + 信号灯红/绿）。必须在默认皮肤
+        // **之后**调用，否则会被默认皮肤盖回去（docs/GAME_UI_AND_FACING.md
+        // §六）。皮肤包在 exe 同级 skins/rail/skin.css，找不到时 UseSkin
+        // 返回 false，外观保持不变——不影响游戏跑。
+        if (h.App() != null) {
+            h.App().UseSkin("dark");
+            h.App().UseSkin("rail");
+        }
         h.Hud().Add(this.shell.Overlay().Root());
         this.autoDrive = this.shell.AutoDrive();
         if (this.smokeMode || this.demoMode) {
@@ -218,11 +238,53 @@ public class RailGame : IGuiHostLoop {
             this.shell.RecordClear();
             this.screen = RailGame.ScreenResult;
         }
+        // 调试钩子（截图/验收用，不影响正常玩法）：
+        //   RAIL_FACE=up|right|down|left  把机车摆到该朝向并冻结，
+        //                                    用来截"朝向一眼可辨"的对比图；
+        //   RAIL_SETTINGS=1                直接弹出设置浮层；
+        //   RAIL_TIME=n                    把本关剩余秒数改成 n
+        //                                    （截"倒计时变红闪烁"的图）。
+        this.ApplyFacingHook(Environment.GetEnvironmentVariable("RAIL_FACE"));
+        if (Environment.GetEnvironmentVariable("RAIL_SETTINGS") == "1") {
+            this.shell.Overlay().SetOpen(true);
+        }
+        string timeEnv = Environment.GetEnvironmentVariable("RAIL_TIME");
+        if (timeEnv != "") {
+            this.timeLeft = Convert.ToInt32(timeEnv);
+        }
+    }
+
+    // 把机车摆到一节朝指定方向连通的直轨上（非分岔、非站台），并冻结。
+    void ApplyFacingHook(string face) {
+        if (face == null || face == "") { return; }
+        if (this.net == null || this.train == null) { return; }
+        int dir = -1;
+        if (face == "up" || face == "north") { dir = RailNetwork.North; }
+        if (face == "right" || face == "east") { dir = RailNetwork.East; }
+        if (face == "down" || face == "south") { dir = RailNetwork.South; }
+        if (face == "left" || face == "west") { dir = RailNetwork.West; }
+        if (dir < 0) { return; }
+        for (int y = 0; y < this.net.height; y = y + 1) {
+            for (int x = 0; x < this.net.width; x = x + 1) {
+                if (!this.net.IsTrack(x, y)) { continue; }
+                if (this.net.KindAt(x, y) != RailNetwork.KindTrack) { continue; }
+                if (this.net.IsSwitch(x, y)) { continue; }
+                if (!this.net.Linked(x, y, dir)) { continue; }
+                this.train.Place(x, y, dir);
+                this.freeze = true;
+                return;
+            }
+        }
     }
 
     public void Event(GuiHost h, int kind, int keycode) {
         if (kind == 1) {
             this.UpdateHover(h.MouseX(), h.MouseY());
+            return;
+        }
+        if (kind == 2) {
+            // 鼠标按下：记下按住了哪个按钮（画布按钮的"按下"态）。
+            this.pressedAction = this.ButtonAt(h.MouseX(), h.MouseY());
             return;
         }
         if (kind == 4) {
@@ -237,6 +299,7 @@ public class RailGame : IGuiHostLoop {
             return;
         }
         if (kind == 3) {
+            this.pressedAction = -1;
             if (keycode != 0) { return; }
             int seq = h.App().window.EventSeq();
             if (seq == this.lastSeq) { return; }
@@ -261,6 +324,11 @@ public class RailGame : IGuiHostLoop {
             this.eventTimer = this.eventTimer - 1;
             if (this.eventTimer <= 0) { this.lastEvent = ""; }
         }
+        if (this.flashTimer > 0) {
+            this.flashTimer = this.flashTimer - 1;
+            if (this.flashTimer <= 0) { this.flashKind = 0; }
+        }
+        this.UpdatePuffs();
         if (this.screen != RailGame.ScreenPlay) { return; }
         // 自动调度开关实时生效（设置面板改完立刻可用）。
         if (!this.smokeMode && !this.demoMode) {
@@ -274,6 +342,15 @@ public class RailGame : IGuiHostLoop {
         // 倒计时。
         this.TickClock(deltaMilliseconds);
         if (this.train == null) { return; }
+        if (this.freeze) { return; }
+        // 行进时冒蒸汽（停在分岔等调度时不冒）。
+        if (!this.train.waiting) {
+            this.puffTimer = this.puffTimer + deltaMilliseconds;
+            if (this.puffTimer >= 220) {
+                this.puffTimer = 0;
+                this.SpawnPuff();
+            }
+        }
         if (this.train.waiting) {
             // 停在分岔处等调度命令；自动调度模式下由调度员代选。
             if (this.autoDrive) {
@@ -308,6 +385,7 @@ public class RailGame : IGuiHostLoop {
             this.view.DrawHud(c, this, w);
             this.view.DrawFooter(c, this, w, hgt);
             this.view.DrawBanner(c, this, w, hgt);
+            this.view.DrawFlash(c, this, w, hgt);
         } else {
             this.view.DrawBackground(c, w, hgt);
             this.view.DrawResult(c, this, w, hgt);
@@ -317,7 +395,8 @@ public class RailGame : IGuiHostLoop {
             bool hover = b.enabled && this.host != null
                 && this.host.MouseX() >= b.x && this.host.MouseX() < b.x + b.w
                 && this.host.MouseY() >= b.y && this.host.MouseY() < b.y + b.h;
-            this.view.DrawButton(c, b, hover);
+            bool pressed = b.enabled && this.pressedAction == b.action;
+            this.view.DrawButton(c, b, hover, pressed);
         }
         if (this.capturePath != "" && this.frames == this.captureFrame) {
             c.WritePixels(this.capturePath, 0, 0, c.Width(), c.Height());
@@ -364,6 +443,9 @@ public class RailGame : IGuiHostLoop {
         this.wrongCount = 0;
         this.bonusTotal = 0;
         this.crashTotal = 0;
+        this.flashTimer = 0;
+        this.flashKind = 0;
+        this.puffs.Clear();
         this.levelIndex = 0;
         this.StartLevel(0);
         this.screen = RailGame.ScreenPlay;
@@ -372,6 +454,9 @@ public class RailGame : IGuiHostLoop {
 
     public void StartLevel(int index) {
         this.levelIndex = index;
+        this.puffs.Clear();
+        this.flashTimer = 0;
+        this.flashKind = 0;
         this.net = new RailNetwork(RailGame.LevelRows(index));
         this.net.AssignStations(RailGame.LevelStations(index));
         this.cargoTypes = RailGame.LevelCargo(index);
@@ -380,6 +465,7 @@ public class RailGame : IGuiHostLoop {
         int seconds = RailGame.LevelSeconds(index);
         if (this.shell.Strict()) { seconds = seconds * 4 / 5; }
         this.timeLeft = seconds;
+        this.levelSeconds = seconds;
         this.elapsed = 0;
         this.timeAcc = 0;
         this.moveTimer = 0;
@@ -441,6 +527,7 @@ public class RailGame : IGuiHostLoop {
                 this.score = this.score - RailCargo.WrongPenalty;
                 this.wrongCount = this.wrongCount + 1;
                 this.PlaySfx("error");
+                this.Flash(1, 40);
                 this.SetEvent("这站台要的是" + RailCargo.NameOf(st)
                     + "货，送错扣 " + Convert.ToString(RailCargo.WrongPenalty) + " 分");
             }
@@ -452,6 +539,7 @@ public class RailGame : IGuiHostLoop {
             this.crashTotal = this.crashTotal + 1;
             this.timeLeft = this.timeLeft - RailCargo.CrashTimeCost;
             this.PlaySfx("crash");
+            this.Flash(2, 64);
             this.SetEvent("脱轨！退回上一个分岔，扣 "
                 + Convert.ToString(RailCargo.CrashPenalty) + " 分并损失 "
                 + Convert.ToString(RailCargo.CrashTimeCost) + " 秒");
@@ -508,6 +596,45 @@ public class RailGame : IGuiHostLoop {
         this.lastEvent = text;
         this.eventTimer = 90;
     }
+
+    // ----- 画面反馈 -----------------------------------------------------
+
+    // 冒一缕蒸汽：位置挂在机车身上，往车尾方向飘。
+    void SpawnPuff() {
+        if (this.train == null) { return; }
+        double dirx = (double)RailNetwork.Dx(this.train.dir);
+        double diry = (double)RailNetwork.Dy(this.train.dir);
+        double gx = (double)this.train.x + 0.5 + dirx * 0.04;
+        double gy = (double)this.train.y + 0.5 + diry * 0.04;
+        this.puffs.Add(new RailPuff(gx, gy, 34));
+    }
+
+    // 蒸汽推进：年龄 +1，往车尾飘一点，再往上飘一点，寿命到就回收。
+    void UpdatePuffs() {
+        double dirx = 0.0;
+        double diry = 0.0;
+        if (this.train != null) {
+            dirx = (double)RailNetwork.Dx(this.train.dir);
+            diry = (double)RailNetwork.Dy(this.train.dir);
+        }
+        for (int i = this.puffs.Count - 1; i >= 0; i = i - 1) {
+            RailPuff p = this.puffs[i];
+            p.age = p.age + 1;
+            p.gx = p.gx - dirx * 0.012;
+            p.gy = p.gy - diry * 0.012;
+            p.gy = p.gy - 0.005;
+            if (p.Dead()) { this.puffs.RemoveAt(i); }
+        }
+    }
+
+    // 警示闪烁：kind 1 = 送错站台，2 = 脱轨。
+    void Flash(int kind, int frames) {
+        this.flashKind = kind;
+        this.flashTimer = frames;
+    }
+
+    // 本关时限（秒）：表盘算剩余占比用。
+    public int CurrentSeconds() { return this.levelSeconds; }
 
     void PlaySfx(string name) {
         if (this.bank == null) { return; }
@@ -591,6 +718,17 @@ public class RailGame : IGuiHostLoop {
             if (b.action == RailGame.ActBranchRight) { this.hoverBranch = 1; }
             return;
         }
+    }
+
+    // 鼠标位置下的按钮动作码（没有就 -1）。
+    int ButtonAt(int mx, int my) {
+        for (int i = 0; i < this.buttons.Count; i = i + 1) {
+            RailButton b = this.buttons[i];
+            if (!b.enabled) { continue; }
+            if (mx < b.x || mx >= b.x + b.w || my < b.y || my >= b.y + b.h) { continue; }
+            return b.action;
+        }
+        return -1;
     }
 
     void OnClick(int mx, int my) {

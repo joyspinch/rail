@@ -1,0 +1,146 @@
+/* skin.css — 铁轨快递 · RAIL 的铁路风皮肤包。
+ *
+ * 位置：build/rail/skins/rail/skin.css（exe 同级），由
+ * client/assets/skins/rail/skin.css 拷贝而来；启动时
+ * `host.App().UseSkin("dark")` → `host.App().UseSkin("rail")` 应用
+ * （**必须在默认皮肤之后**，否则会被盖回去）。
+ *
+ * 令牌名照 packages/Zan.Gui/src/Gui/skins/base.css 与
+ * Gui/Styling/Theme.zan 的清单抄，不自造：颜色用 #AARRGGBB（与画布
+ * 0xAARRGGBB 同一套），度量用十进制。
+ *
+ * 配色语义：**机油黑（底）+ 黄铜（描边/强调）+ 信号灯红绿（状态）**。
+ * 这三个色值与 client/src/RailPalette.zan 一一对应——画布 UI 与标准库
+ * 控件（设置浮层）是两条渲染路径，靠同一份色值统一观感。改色先改
+ * RailPalette.zan，再改这里。
+ *
+ * 圆角写两组：`--border-radius-*` 才是真正驱动控件圆角的令牌（Theme
+ * 字段 borderRadiusSmall/Medium/Large），`--radius-*` 只在本皮肤自己的
+ * 规则里有效。两组都写，免得改了一处另一处没跟上。
+ */
+
+:root {
+  --name: "铁轨快递";
+  --base: dark;
+  --dark: 1;
+
+  /* 强调色：黄铜 */
+  --primary: #FFC79A4E;
+  --primary-hover: #FFE8C87A;
+  --primary-pressed: #FF8E6A2E;
+
+  /* 状态色：信号灯 */
+  --success: #FF6FCF7F;
+  --success-hover: #FF93E39F;
+  --success-pressed: #FF4EA85F;
+  --warning: #FFE8C87A;
+  --warning-hover: #FFF2DCA6;
+  --warning-pressed: #FFB08A38;
+  --error: #FFE04A42;
+  --error-hover: #FFF07872;
+  --error-pressed: #FFB03028;
+  --info: #FF8FB4C8;
+  --info-hover: #FFAECBE0;
+  --info-pressed: #FF6B8FA5;
+
+  /* 文字：米白 / 素绢 / 灰铁 */
+  --text-primary: #FFF2E7D4;
+  --text-secondary: #FFC0B49E;
+  --text-tertiary: #FF8A8072;
+  --text-disabled: #FF5E666B;
+  --text-inverse: #FF1A1206;
+
+  /* 表面：机油黑 */
+  --bg-primary: #FF14181B;
+  --bg-secondary: #FF1E2327;
+  --bg-tertiary: #FF262C31;
+  --bg-hover: #FF323A40;
+  --bg-active: #FF101417;
+  --bg-disabled: #FF1A1F23;
+
+  /* 描边：黄铜 */
+  --border-primary: #FFC79A4E;
+  --border-secondary: #FF6E5528;
+  --border-hover: #FFE8C87A;
+  --border-focus: #FFE8C87A;
+  --divider: #FF3A4249;
+
+  --shadow-color: #B3000000;
+  --scrollbar: #FF3A4249;
+  --tooltip-bg: #FF1E2327;
+  --tooltip-border: #FFC79A4E;
+  --tooltip-text: #FFF2E7D4;
+
+  /* 度量：钢印小圆角 */
+  --radius-small: 4;
+  --radius-medium: 8;
+  --radius-large: 12;
+  --border-radius-small: 4;
+  --border-radius-medium: 8;
+  --border-radius-large: 12;
+
+  --font-size-tiny: 12;
+  --font-size-small: 13;
+  --font-size-medium: 14;
+  --font-size-large: 16;
+  --font-size-huge: 20;
+}
+
+/* ---- 按钮：铜边钢牌 -------------------------------------------------- */
+button {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1 var(--border-secondary);
+  border-radius: var(--radius-small);
+  font-size: var(--font-size-medium);
+}
+button:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+button:active {
+  background: var(--bg-active);
+  border-color: var(--border-hover);
+}
+/* 当前选中的档位：黄铜实心（设置浮层的高亮就走这条）。 */
+button.primary {
+  background: var(--primary);
+  color: var(--text-inverse);
+  border: 1 var(--primary);
+}
+button.primary:hover {
+  background: var(--primary-hover);
+  color: var(--text-inverse);
+  border-color: var(--primary-hover);
+}
+button.primary:active {
+  background: var(--primary-pressed);
+  color: var(--text-inverse);
+  border-color: var(--primary-pressed);
+}
+button:disabled {
+  background: var(--bg-disabled);
+  color: var(--text-disabled);
+  border: 1 var(--border-secondary);
+}
+
+/* ---- 文字 ------------------------------------------------------------- */
+label {
+  color: var(--text-primary);
+  font-size: var(--font-size-medium);
+}
+
+/* ---- 设置浮层的内容盒（SettingsOverlay 的 class="card"） --------------
+ * 原来这里是系统默认黑卡片：机油黑底 + 黄铜描边 + 圆角钢印角。 */
+panel.card, card {
+  background: #F21E2327;
+  color: var(--text-primary);
+  border: 1 var(--border-primary);
+  border-radius: var(--radius-medium);
+  box-shadow: 0 8 22 var(--shadow-color);
+  padding: var(--padding-large);
+}
+panel.card::title, card::title {
+  color: var(--primary-hover);
+}

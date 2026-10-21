@@ -75,4 +75,20 @@ $zargs += @('-o', $exe)
 if ($LASTEXITCODE -ne 0) { throw "zanc failed ($LASTEXITCODE)" }
 $assets = Join-Path $project 'assets'
 if (Test-Path $assets) { Copy-Item $assets $Output -Recurse -Force }
+# 皮肤包必须与 exe 同级：build/rail/skins/rail/skin.css
+# （Gui.Styling.Skin.Roots 查的是 exe 同级 skins/ 与 assets/skins/）。
+$skinSrc = Join-Path $assets 'skins/rail'
+if (Test-Path $skinSrc) {
+    $skinDst = Join-Path $Output 'skins/rail'
+    New-Item -ItemType Directory -Force -Path $skinDst | Out-Null
+    Copy-Item (Join-Path $skinSrc '*') $skinDst -Recurse -Force
+}
+# 控件基线 base.css 跟皮肤包放在一起：Gui 只在磁盘上找它（没有内嵌
+# 兜底），缺了它整层组件基线就没了，控件会退回硬编码的系统外观。
+$baseCss = Join-Path $PackageProject 'packages/Zan.Gui/src/Gui/skins/base.css'
+if (Test-Path $baseCss) {
+    $skinsDir = Join-Path $Output 'skins'
+    New-Item -ItemType Directory -Force -Path $skinsDir | Out-Null
+    Copy-Item $baseCss (Join-Path $skinsDir 'base.css') -Force
+}
 Write-Host "Built $exe"

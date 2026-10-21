@@ -1,0 +1,19 @@
+// 一缕蒸汽：机车行进时从烟囱冒出，往车尾方向飘散并淡出。
+//
+// 位置用**格坐标**（不是屏幕像素）：窗口尺寸变了，蒸汽仍然挂在机车
+// 后面那几格上，不会飘到别处。
+public class RailPuff {
+    public double gx;     // 格坐标 x（0.5 = 某格中心）
+    public double gy;     // 格坐标 y
+    public int age;       // 已存在帧数
+    public int life;      // 生命帧数
+
+    public RailPuff(double x, double y, int lifeFrames) {
+        this.gx = x;
+        this.gy = y;
+        this.age = 0;
+        this.life = lifeFrames;
+    }
+
+    public bool Dead() { return this.age >= this.life; }
+}

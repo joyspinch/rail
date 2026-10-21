@@ -29,12 +29,12 @@ public class RailCargo {
         return "杂货";
     }
 
-    // 货物/站台的识别色（0xAARRGGBB）。
+    // 货物/站台的识别色（0xAARRGGBB）——取自色板，别处不再各挑一个近似色。
     public static int ColorOf(int type) {
-        if (type == Red) { return 0xFFE04A42; }
-        if (type == Blue) { return 0xFF3E8FD6; }
-        if (type == Yellow) { return 0xFFEFC04A; }
-        return 0xFFB0B8C0;
+        if (type == Red) { return RailPalette.CargoRed; }
+        if (type == Blue) { return RailPalette.CargoBlue; }
+        if (type == Yellow) { return RailPalette.CargoYellow; }
+        return RailPalette.TextTertiary;
     }
 
     // 类型是否匹配：只有同类型才算送达。

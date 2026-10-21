@@ -1,0 +1,70 @@
+using System;
+
+// 朝向：逻辑方向 → 精灵表帧号（纯函数，不碰画布）。
+//
+// 为什么必须离线烘焙：引擎运行时转不了图——`Canvas.BlitImage` 只有源矩形
+// (sx,sy,sw,sh)，没有旋转、没有水平翻转；`Gui.SpriteBatch` 的每精灵也只有
+// dx/dy/dw/dh/sx/sy/sw/sh/tint。所以方向帧是**离线烘焙**好的精灵表
+// （client/tools/bake_facing.py），运行时只按方向取帧。
+//
+// 约定（三处必须一致，错了就是"转到隔壁去"）：
+//   * 精灵表帧 0 = 车头朝上，之后每帧顺时针转 360/16 = 22.5°；
+//   * 角度用屏幕坐标（x 向右 = 0°，y 向下 = +90°），与 atan2(dy, dx) 一致；
+//   * 帧号 = 把角度换算成"自上起顺时针"后取最近的帧（四舍五入）。
+//
+// 纯函数，用例直接钉住（client/tests/rail_test.zan）：
+// 0/90/180/270 度、±π 等价、帧界单调（角度连续变化时帧号只前进一格）。
+public class RailFacing {
+    public const double Pi = 3.14159265358979;
+
+    // 方向帧数：16 = 22.5° 一帧。铁轨俯视、机车随时变向，8 帧（45°）在斜向
+    // 分岔上会明显"转到隔壁去"，16 帧更稳。
+    public const int Frames = 16;
+
+    // 精灵表帧尺寸（**源图像素**，不是显示像素）：与
+    // client/tools/bake_facing.py 的输出一一对应。
+    public const int TrainFrameW = 128;
+    public const int TrainFrameH = 128;
+    public const int CargoFrameW = 48;
+    public const int CargoFrameH = 48;
+
+    // 角度（弧度，屏幕坐标）→ 自上起顺时针的度数（0..360，不含 360）。
+    public static double ClockwiseDegrees(double angle) {
+        double deg = angle * 180.0 / RailFacing.Pi + 90.0;
+        deg = deg % 360.0;
+        if (deg < 0.0) { deg = deg + 360.0; }
+        return deg;
+    }
+
+    // 角度（弧度，屏幕坐标）→ 精灵表帧号。
+    //
+    // 加半帧再整除 = 四舍五入到最近帧（0° 落在帧 4，即"朝右"；90° 落在
+    // 帧 8，"朝下"；帧 0 是"朝上"）。
+    public static int Frame(double angle) {
+        double step = 360.0 / (double)RailFacing.Frames;
+        double deg = RailFacing.ClockwiseDegrees(angle);
+        int idx = (int)((deg + step * 0.5) / step);
+        if (idx >= RailFacing.Frames) { idx = RailFacing.Frames - 1; }
+        if (idx < 0) { idx = 0; }
+        return idx;
+    }
+
+    // 网格方向（RailNetwork.North/East/South/West = 0/1/2/3）→ 帧号。
+    // 每 90° 四帧：北 0 / 东 4 / 南 8 / 西 12。
+    public static int FrameForDirection(int dir) {
+        int d = dir % 4;
+        if (d < 0) { d = d + 4; }
+        int idx = d * (RailFacing.Frames / 4);
+        if (idx >= RailFacing.Frames) { idx = idx - RailFacing.Frames; }
+        return idx;
+    }
+
+    // 帧号 → 精灵表源矩形左边界（源图像素）。
+    public static int TrainSrcX(int frame) {
+        return frame * RailFacing.TrainFrameW;
+    }
+
+    public static int CargoSrcX(int frame) {
+        return frame * RailFacing.CargoFrameW;
+    }
+}

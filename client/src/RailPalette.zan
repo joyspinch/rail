@@ -1,0 +1,72 @@
+// 铁轨快递 · RAIL 的色板——**整个项目唯一一处颜色定义**。
+//
+// 判据（docs/GAME_UI_AND_FACING.md §二.3「颜色收进一个色板」）：同一个语义
+// 只允许有一个颜色。画布上的 HUD、面板、按钮、倒计时表盘、货物类型色、
+// 警示闪烁全部从这里取；皮肤包 `client/assets/skins/rail/skin.css` 里的同名
+// 令牌必须与这里一致——画布 UI 与标准库控件（设置浮层）是两条渲染路径，
+// 靠同一份色值统一观感。改色先改这张表，再改 skin.css。
+//
+// 配色：**机油黑（底）+ 黄铜（描边/强调）+ 信号灯红绿（状态）**。
+public class RailPalette {
+    // —— 机油黑（底）——
+    public const int OilDeep = 0xFF14181B;    // 画面最底（菜单/结算兜底）
+    public const int PanelBg = 0xFF1E2327;     // 面板底
+    public const int PanelBgSoft = 0xFF262C31; // HUD 面板（顶栏）
+    public const int SlotBg = 0xFF191D20;      // 凹槽 / 表盘暗环
+    public const int Overlay = 0xB0000000;     // 浮层遮罩（压暗画面）
+    public const int Shadow = 0x99000000;     // 文字/面板投影
+    public const int ContactShadow = 0x66000000; // 物体落地接触阴影
+
+    // —— 黄铜（描边 / 强调）——
+    public const int Brass = 0xFFC79A4E;
+    public const int BrassBright = 0xFFE8C87A;
+    public const int BrassDim = 0xFF6E5528;
+    public const int BrassText = 0xFFF2C14E;   // 标题金
+
+    // —— 文字 ——
+    public const int TextPrimary = 0xFFF2E7D4;
+    public const int TextSecondary = 0xFFC0B49E;
+    public const int TextTertiary = 0xFF8A8072;
+    public const int TextInverse = 0xFF1A1206;
+
+    // —— 状态（信号灯）——
+    public const int SignalGreen = 0xFF6FCF7F;
+    public const int SignalRed = 0xFFE04A42;
+    public const int Success = 0xFF7FC98A;
+    public const int Danger = 0xFFE05A4E;
+    public const int DangerSoft = 0xFFE8C0B8;
+
+    // —— 仪表盘面（压力表奶白表盘）——
+    public const int DialFace = 0xFFEEE4C8;
+
+    // —— 货物类型色（红/蓝/黄）——
+    public const int CargoRed = 0xFFE04A42;
+    public const int CargoBlue = 0xFF3E8FD6;
+    public const int CargoYellow = 0xFFEFC04A;
+
+    // 两个颜色按百分比混合（t = 第二个颜色的占比，0..100）。
+    public static int Mix(int a, int b, int t) {
+        if (t < 0) { t = 0; }
+        if (t > 100) { t = 100; }
+        int aa = (a >> 24) & 255;
+        int ar = (a >> 16) & 255;
+        int ag = (a >> 8) & 255;
+        int ab = a & 255;
+        int ba = (b >> 24) & 255;
+        int br = (b >> 16) & 255;
+        int bg = (b >> 8) & 255;
+        int bb = b & 255;
+        int oa = (aa * (100 - t) + ba * t) / 100;
+        int orr = (ar * (100 - t) + br * t) / 100;
+        int og = (ag * (100 - t) + bg * t) / 100;
+        int ob = (ab * (100 - t) + bb * t) / 100;
+        return (oa << 24) | (orr << 16) | (og << 8) | ob;
+    }
+
+    // 换 alpha（警示闪烁 / 遮罩用）。
+    public static int WithAlpha(int c, int a) {
+        if (a < 0) { a = 0; }
+        if (a > 255) { a = 255; }
+        return (a << 24) | (c & 0x00FFFFFF);
+    }
+}

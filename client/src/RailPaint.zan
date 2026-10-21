@@ -4,6 +4,10 @@ using Game.Kit;
 
 // 逻辑坐标下的画布原语：把 CDraw 的视口映射包一层，让整个界面都写在
 // 逻辑像素里（1280×800 设计分辨率，CDraw.StageViewport 负责等比缩放）。
+//
+// 本文件也是"美术底板"的绘制原语：九宫格切图（引擎没有 border-image，
+// 面板/按钮要拉伸只能自己裁源矩形拼 9 块）+ 带阴影/描边的文字（压在
+// 游戏画面上也要读得清）。
 public class RailPaint {
     public static int X(int v) { return CDraw.MapX(v + CDraw.originX); }
     public static int Y(int v) { return CDraw.MapY(v + CDraw.originY); }
@@ -39,15 +43,68 @@ public class RailPaint {
         c.DrawCircle(RailPaint.X(cx), RailPaint.Y(cy), RailPaint.S(rad), color, RailPaint.S(t));
     }
 
+    // 径向柔光（蒸汽、灯光、警示辉光）：中心 innerAlpha 平滑衰减到边缘 0。
+    public static void Glow(Canvas c, int cx, int cy, int rad, int color, int innerAlpha) {
+        if (rad <= 0 || innerAlpha <= 0) { return; }
+        c.FillRadial(RailPaint.X(cx), RailPaint.Y(cy), RailPaint.S(rad), color, innerAlpha);
+    }
+
+    // 直线段（表盘指针用）。
+    public static void Line(Canvas c, int x0, int y0, int x1, int y1, int t, int color) {
+        if (t <= 0) { return; }
+        c.DrawLine(RailPaint.X(x0), RailPaint.Y(y0), RailPaint.X(x1), RailPaint.Y(y1), color, RailPaint.S(t));
+    }
+
     public static void Text(Canvas c, string text, int x, int y, int size, int color) {
         if (text == null || text == "") { return; }
         c.DrawText(RailPaint.X(x), RailPaint.Y(y), text, color, RailPaint.S(size));
     }
 
+    // 带阴影的文字：压在游戏画面上时必须带阴影才读得清（先在 (1,1) 偏移
+    // 处画一层暗色，再画正文）。
+    public static void TextShadow(Canvas c, string text, int x, int y, int size, int color) {
+        if (text == null || text == "") { return; }
+        c.DrawText(RailPaint.X(x + 1), RailPaint.Y(y + 1), text,
+            RailPalette.Shadow, RailPaint.S(size));
+        c.DrawText(RailPaint.X(x), RailPaint.Y(y), text, color, RailPaint.S(size));
+    }
+
+    // 描边文字（标题级）：四向偏移画一圈描边色，再画正文。
+    public static void TextOutlined(Canvas c, string text, int cx, int y, int size,
+                                    int color, int outline) {
+        if (text == null || text == "") { return; }
+        int tw = RailPaint.MeasureLogical(text, size);
+        int tx = cx - tw / 2;
+        int px = RailPaint.X(tx);
+        int py = RailPaint.Y(y);
+        int fs = RailPaint.S(size);
+        c.DrawText(px - 1, py, text, outline, fs);
+        c.DrawText(px + 1, py, text, outline, fs);
+        c.DrawText(px, py - 1, text, outline, fs);
+        c.DrawText(px, py + 1, text, outline, fs);
+        c.DrawText(px, py, text, color, fs);
+    }
+
     public static void TextCentered(Canvas c, string text, int cx, int y, int boxW, int size, int color) {
         if (text == null || text == "") { return; }
-        int tw = c.MeasureText(text, RailPaint.S(size));
+        int tw = RailPaint.MeasureLogical(text, size);
         c.DrawText(RailPaint.X(cx - tw / 2), RailPaint.Y(y), text, color, RailPaint.S(size));
+    }
+
+    // 带阴影的居中文字。
+    public static void TextCenteredShadow(Canvas c, string text, int cx, int y, int size, int color) {
+        if (text == null || text == "") { return; }
+        int tw = RailPaint.MeasureLogical(text, size);
+        RailPaint.TextShadow(c, text, cx - tw / 2, y, size, color);
+    }
+
+    // 文字宽度（逻辑像素）。Canvas.MeasureText 返回设备像素，而布局写在
+    // 逻辑坐标里——不换算回去，视口缩放后居中文字就会跑偏。
+    public static int MeasureLogical(string text, int size) {
+        if (text == null || text == "") { return 0; }
+        int dev = Canvas.MeasureText(text, RailPaint.S(size));
+        if (CDraw.vpS <= 0) { return dev; }
+        return dev * 65536 / CDraw.vpS;
     }
 
     // 贴整幅图（逻辑坐标，自动做视口映射）。
@@ -56,7 +113,7 @@ public class RailPaint {
         CDraw.BlitImage(c, path, x, y, w, h);
     }
 
-    // 贴图并裁源矩形：视差取景 / 一张图切多块用。
+    // 贴图并裁源矩形：视差取景 / 精灵表取帧用。
     // CDraw 公共包里还没有 BlitImageSrc，这里用底层 Canvas.BlitImage
     // 配 CDraw 的视口映射自己算坐标。
     public static void BlitSrc(Canvas c, string path, int x, int y, int w, int h,
@@ -67,5 +124,62 @@ public class RailPaint {
         if (sw < 1) { sw = 1; }
         if (sh < 1) { sh = 1; }
         c.BlitImage(key, RailPaint.X(x), RailPaint.Y(y), RailPaint.S(w), RailPaint.S(h), sx, sy, sw, sh);
+    }
+
+    // 九宫格：把 path 切成 9 块拼到目标矩形（角固定、边横/竖拉伸、
+    // 中间平铺）。引擎没有 border-image，面板/按钮要拉伸只能自己切。
+    //
+    // border 是**源图像素**的切角宽度（与 client/tools/bake_ui.py 画
+    // 底板的切角一致）：面板 24、按钮 14。角上的铆钉与圆角都落在 border
+    // 内，中间只留可拉伸的纯色/渐变——中间放噪声就会被拉成条纹。
+    public static void NineSlice(Canvas c, string path, int x, int y, int w, int h,
+                                 int border) {
+        RailPaint.NineSliceSrc(c, path, x, y, w, h, 0, 0, 0, 0, border);
+    }
+
+    // 九宫格（带源矩形）：从精灵表的第 frame 帧里切一块出来拼。
+    // sw/sh = 0 表示用整幅图。
+    public static void NineSliceSrc(Canvas c, string path, int x, int y, int w, int h,
+                                    int sx, int sy, int sw, int sh, int border) {
+        if (path == null || path == "") { return; }
+        if (w <= 0 || h <= 0) { return; }
+        string key = CDraw.BlitSource(c, path);
+        if (key == null) { return; }
+        int iw = Canvas.ImageWidth(key);
+        int ih = Canvas.ImageHeight(key);
+        if (iw <= 0 || ih <= 0) { return; }
+        if (sw <= 0) { sw = iw; }
+        if (sh <= 0) { sh = ih; }
+        int b = border;
+        if (b * 2 >= sw) { b = sw / 2; }
+        if (b * 2 >= sh) { b = sh / 2; }
+        if (b < 1) { return; }
+        if (w < b * 2 || h < b * 2) {
+            // 目标比切角还窄：退化成整幅拉伸。
+            RailPaint.Slice(c, key, x, y, w, h, sx, sy, sw, sh);
+            return;
+        }
+        int midW = sw - b * 2;
+        int midH = sh - b * 2;
+        // 四角。
+        RailPaint.Slice(c, key, x, y, b, b, sx, sy, b, b);
+        RailPaint.Slice(c, key, x + w - b, y, b, b, sx + sw - b, sy, b, b);
+        RailPaint.Slice(c, key, x, y + h - b, b, b, sx, sy + sh - b, b, b);
+        RailPaint.Slice(c, key, x + w - b, y + h - b, b, b, sx + sw - b, sy + sh - b, b, b);
+        // 四边。
+        RailPaint.Slice(c, key, x + b, y, w - b * 2, b, sx + b, sy, midW, b);
+        RailPaint.Slice(c, key, x + b, y + h - b, w - b * 2, b, sx + b, sy + sh - b, midW, b);
+        RailPaint.Slice(c, key, x, y + b, b, h - b * 2, sx, sy + b, b, midH);
+        RailPaint.Slice(c, key, x + w - b, y + b, b, h - b * 2, sx + sw - b, sy + b, b, midH);
+        // 中心。
+        RailPaint.Slice(c, key, x + b, y + b, w - b * 2, h - b * 2, sx + b, sy + b, midW, midH);
+    }
+
+    // 一块切片：目标矩形在前、源矩形在后（源坐标是**原图像素**）。
+    public static void Slice(Canvas c, string key, int dx, int dy, int dw, int dh,
+                             int sx, int sy, int sw, int sh) {
+        if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) { return; }
+        c.BlitImage(key, RailPaint.X(dx), RailPaint.Y(dy), RailPaint.S(dw), RailPaint.S(dh),
+                    sx, sy, sw, sh);
     }
 }

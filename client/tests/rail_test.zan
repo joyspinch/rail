@@ -408,6 +408,93 @@ public class RailTest {
         Ok(g.shell.Runs() >= 0, "出场次数可读");
     }
 
+    // ----- 朝向：角度 → 精灵表帧号（纯函数） ----------------------------
+    //
+    // 钉住三件事，错了就是"机车转到隔壁去"：
+    //   1. 四个正方向的映射（0/90/180/270 度）；
+    //   2. ±π 等价（同一朝向的两个角度必须落在同一帧）；
+    //   3. 帧界单调（角度连续变化时帧号只前进一格，不跳帧不倒退）。
+    static void TestFacing() {
+        double pi = RailFacing.Pi;
+        double half = pi / 2.0;
+
+        // 角度约定：屏幕坐标（x 向右 = 0°，y 向下 = +90°）。
+        // 帧 0 = 车头朝上，于是：右 = 帧 4、下 = 帧 8、左 = 帧 12、上 = 帧 0。
+        Eq(RailFacing.Frame(0.0), 4, "朝向 0 度（向右）取帧 4");
+        Eq(RailFacing.Frame(half), 8, "朝向 90 度（向下）取帧 8");
+        Eq(RailFacing.Frame(pi), 12, "朝向 180 度（向左）取帧 12");
+        Eq(RailFacing.Frame(half * 3.0), 0, "朝向 270 度（向上）取帧 0");
+
+        // ±π 等价：同一朝向的两个角度必须落在同一帧。
+        Eq(RailFacing.Frame(pi), RailFacing.Frame(-pi), "朝向 ±π 等价");
+        Eq(RailFacing.Frame(0.0), RailFacing.Frame(2.0 * pi), "朝向 0 与 2π 等价");
+        Eq(RailFacing.Frame(-half), RailFacing.Frame(half * 3.0), "朝向 -90 与 270 等价");
+
+        // 网格方向 → 帧号（运行时就是这么取帧的）。
+        Eq(RailFacing.FrameForDirection(RailNetwork.North), 0, "北向取帧 0");
+        Eq(RailFacing.FrameForDirection(RailNetwork.East), 4, "东向取帧 4");
+        Eq(RailFacing.FrameForDirection(RailNetwork.South), 8, "南向取帧 8");
+        Eq(RailFacing.FrameForDirection(RailNetwork.West), 12, "西向取帧 12");
+
+        // 帧界单调：角度每走 1/64 圈，帧号只能不变或前进一格（回绕处
+        // 15 → 0 算前进一格）。
+        bool monotone = true;
+        int steps = 64;
+        for (int i = 0; i < steps; i = i + 1) {
+            double a0 = -pi + (double)i * 2.0 * pi / (double)steps;
+            double a1 = -pi + (double)(i + 1) * 2.0 * pi / (double)steps;
+            int f0 = RailFacing.Frame(a0);
+            int f1 = RailFacing.Frame(a1);
+            if (f1 == f0) { continue; }
+            if (f1 == f0 + 1) { continue; }
+            if (f0 == RailFacing.Frames - 1 && f1 == 0) { continue; }
+            monotone = false;
+        }
+        Ok(monotone, "朝向帧界单调（角度连续变化帧号只走一格）");
+
+        // 帧号必须落在精灵表范围内。
+        bool inRange = true;
+        for (int i = 0; i < 64; i = i + 1) {
+            int f = RailFacing.Frame(-pi + (double)i * 2.0 * pi / 64.0);
+            if (f < 0 || f >= RailFacing.Frames) { inRange = false; }
+        }
+        Ok(inRange, "帧号落在精灵表范围内");
+
+        // 精灵表源矩形：帧宽 × 帧号 = 源图像素左边界。
+        Eq(RailFacing.TrainSrcX(0), 0, "机车帧 0 源左边界为 0");
+        Eq(RailFacing.TrainSrcX(1), RailFacing.TrainFrameW, "机车帧 1 源左边界 = 帧宽");
+        Eq(RailFacing.TrainSrcX(RailFacing.Frames - 1),
+            (RailFacing.Frames - 1) * RailFacing.TrainFrameW, "机车末帧源左边界");
+        Eq(RailFacing.CargoSrcX(4), 4 * RailFacing.CargoFrameW, "货箱帧 4 源左边界");
+    }
+
+    // ----- 画面反馈：送错 / 脱轨的红色警示闪烁 ---------------------------
+    static void TestFlashFeedback() {
+        RailGame g = new RailGame(false);
+        g.StartGame();
+        // 送错站台：扣分 + 红色警示闪烁（flashKind 1）。
+        g.cargoType = RailCargo.Blue;                 // 车上是蓝货
+        g.flashTimer = 0;
+        g.flashKind = 0;
+        int before = g.score;
+        // 直接把机车放到红台旁边再走一步，触发 MoveStation 分支。
+        g.train.Place(g.train.x, g.train.y, RailNetwork.East);
+        g.HandleMove(RailTrain.MoveStation);
+        Eq(g.wrongCount, 1, "送错站台记一次送错");
+        Ok(g.score < before, "送错站台扣分");
+        Eq(g.flashKind, 1, "送错站台触发红色警示");
+        Ok(g.flashTimer > 0, "送错站台的警示闪烁有持续帧数");
+
+        // 脱轨：扣分 + 红色警示闪烁（flashKind 2）。
+        g.flashTimer = 0;
+        g.flashKind = 0;
+        int crashBefore = g.crashTotal;
+        g.HandleMove(RailTrain.MoveCrash);
+        Eq(g.crashTotal, crashBefore + 1, "脱轨记一次");
+        Eq(g.flashKind, 2, "脱轨触发红色警示");
+        Ok(g.flashTimer > 0, "脱轨的警示闪烁有持续帧数");
+    }
+
     static void Main() {
         TestMapParsing();
         TestConnectivity();
@@ -417,6 +504,8 @@ public class RailTest {
         TestTimeout();
         TestSeeds();
         TestSaveAccumulation();
+        TestFacing();
+        TestFlashFeedback();
         Console.WriteLine("rail_test checks=" + Convert.ToString(checks)
             + " failures=" + Convert.ToString(failures));
         if (failures > 0) {

@@ -67,6 +67,9 @@ pwsh -File client/tools/build.ps1 -Compiler D:/project/zan-lang/build/zanc.exe `
 | `RAIL_FRAMES=n` | 冒烟帧数（默认 300） |
 | `RAIL_DEMO=1` | 演示：直接进第 1 关并开自动调度（截图用） |
 | `RAIL_RESULT=1` | 直接摆出结算画面（截图用） |
+| `RAIL_FACE=up\|right\|down\|left` | 把机车摆到该朝向并冻结（截"朝向一眼可辨"的对比图） |
+| `RAIL_SETTINGS=1` | 直接弹出设置浮层（截皮肤用；Esc 键同样能弹） |
+| `RAIL_TIME=n` | 把本关剩余秒数改成 n（截倒计时变红闪烁用） |
 | `RAIL_SAVE=dir` | 覆盖存档目录（测试脚本用） |
 | `RAIL_CAPTURE=path.zpx` | 抓画布像素（调试用） |
 
@@ -81,12 +84,18 @@ client/
     RailTrain.zan   机车前进、分岔决策、脱轨回退
     RailCargo.zan   货物与站台类型规则、得分与罚分
     RailView.zan    渲染层：地图、机车、站台、HUD、菜单、结算面板
-    RailPaint.zan   逻辑坐标绘制原语（CDraw 视口映射 + 裁源贴图）
+    RailPaint.zan   逻辑坐标绘制原语（CDraw 视口映射 + 裁源贴图 + 九宫格）
+    RailFacing.zan  朝向 → 精灵表帧号（纯函数，16 方向）
+    RailPalette.zan 色板（整个项目唯一一处颜色定义）
+    RailPuff.zan    一缕蒸汽（格坐标）
     GameShell.zan   存档（最高得分/累计送达/通关次数/出场）+ 设置 + 设置浮层
-  assets/           8 张位图 + assets/sfx/ 8 个 WAV
-  tests/rail_test.zan  140 条玩法断言
-  tools/build.ps1   编译
+  assets/           16 张位图 + assets/sfx/ 8 个 WAV + assets/skins/rail/skin.css
+  tests/rail_test.zan  164 条玩法断言
+  tools/build.ps1   编译（顺带把皮肤包与 base.css 拷到 exe 同级）
   tools/test.ps1    三段测试
+  tools/bake_facing.py / bake_ui.py / bake_bg.py / postprocess.py
+                    素材生成脚本（方向精灵表 / UI 底板 / 背景层次 / AI 原图后处理）
+  tools/gen_images.ps1 / gen_sfx.py  AI 原图与音效的生成脚本
 ```
 
 公共件全部来自 `packages/Zan.Game`：`Game.Kit.CDraw`（视口映射 + 贴图）、
@@ -94,20 +103,37 @@ client/
 `GameSettings` / `SettingsOverlay`（存档与设置）、`Game.Foundation.Gui.GuiHost`
 （宿主与 `IGuiHostLoop`）。
 
+## 观感（第二轮：UI 图形化 + 机车朝向）
+
+- **机车朝向**：引擎运行时转不了图，方向帧由 `client/tools/bake_facing.py`
+  离线旋成 **16 方向精灵表**（帧 0 = 车头朝上，之后每帧顺时针 22.5°），
+  运行时按行进方向取帧（`RailFacing.FrameForDirection`）。车头 = 底部红色
+  排障器 + 一枚暖色前照灯，货箱挂在**车尾**、朝向与车一致。
+- **UI 图形化**：自带皮肤包 `client/assets/skins/rail/skin.css`（机油黑 +
+  黄铜 + 信号灯红/绿），设置浮层不再是系统默认黑卡片；画布上的面板/按钮走
+  **美术底板九宫格**（`ui_panel.png` / `ui_btn_sheet.png`，按钮三态），
+  文字带阴影/描边。
+- **倒计时**：压力表表盘 + 指针（剩余时间占比）+ 信号灯（<10 秒转红闪烁）。
+- **画面细节**：背景加低频层次（云影 + 薄雾带 + 暗角）、站台/货箱/机车加接触
+  阴影、行进时冒蒸汽并轻微摇摆、送错/脱轨时红色警示闪烁。
+
 ## 测试
 
 `client/tools/test.ps1` 三段：
 
-1. `rail_test_OK` —— 玩法断言用例（140 条）：地图解析、轨道连通性与树性质、
+1. `rail_test_OK` —— 玩法断言用例（164 条）：地图解析、轨道连通性与树性质、
    机车逐格前进不脱轨、分岔选择决定下一节点、脱轨回退、货物类型匹配才得分、
    送错扣分、倒计时归零判失败、关卡依次推进、3 个种子随机调度跑完不崩且
-   得分与送达数自洽。
+   得分与送达数自洽、**朝向映射（0/90/180/270 度、±π 等价、帧界单调、
+   精灵表源矩形）**、**送错/脱轨触发红色警示**。
 2. `rail_SAVE_OK runs=1 -> runs=2` —— 存档写两遍读得到（第二遍是新进程）。
 3. `rail_SMOKE_OK` —— 无头冒烟跑满帧自行退出。
 
 ## 当前状态
 
 三关可玩闭环已通：真实位图渲染（轨道/机车/货箱/站台/背景/HUD 面板）、8 个
-音效事件、存档与累计数据、140 条玩法断言全绿。截图见
-`build/rail/shot.png`（游戏画面）、`build/rail/shot_menu.png`（菜单）、
-`build/rail/shot_result.png`（结算）。
+音效事件、存档与累计数据、164 条玩法断言全绿。第二轮补上了**机车朝向**
+（16 方向精灵表）与**UI 图形化**（皮肤包 + 美术底板 + 压力表倒计时 +
+画面细节）。截图见 `build/rail/ui_run.png`（游戏画面）、
+`build/rail/ui_face_up.png` / `ui_face_right.png`（朝向对比）、
+`build/rail/ui_settings.png`（皮肤化设置面板）。
