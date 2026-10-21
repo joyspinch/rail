@@ -71,6 +71,7 @@ pwsh -File client/tools/build.ps1 -Compiler D:/project/zan-lang/build/zanc.exe `
 | `RAIL_FACE=up\|right\|down\|left` | 把机车摆到该朝向并冻结（截"朝向一眼可辨"的对比图） |
 | `RAIL_SETTINGS=1` | 直接弹出设置浮层（截皮肤用；Esc 键同样能弹） |
 | `RAIL_TIME=n` | 把本关剩余秒数改成 n（截倒计时变红闪烁用） |
+| `RAIL_FLASH=1` | 触发一次"送错站台"并冻住警示闪烁（截红色警示用；相位恒定，不靠采样时机） |
 | `RAIL_SAVE=dir` | 覆盖存档目录（测试脚本用） |
 | `RAIL_CAPTURE=path.zpx` | 抓画布像素（调试用） |
 
@@ -91,7 +92,7 @@ client/
     RailPuff.zan    一缕蒸汽（格坐标）
     GameShell.zan   存档（最高得分/累计送达/通关次数/出场）+ 设置 + 设置浮层
   assets/           16 张位图 + assets/sfx/ 8 个 WAV + assets/skins/rail/skin.css
-  tests/rail_test.zan  164 条玩法断言
+  tests/rail_test.zan  172 条玩法断言
   tools/build.ps1   编译（顺带把皮肤包拷到 exe 同级；控件基线 base.css 由编译器内嵌）
   tools/test.ps1    三段测试
   tools/bake_facing.py / bake_ui.py / bake_bg.py / postprocess.py
@@ -122,19 +123,21 @@ client/
 
 `client/tools/test.ps1` 三段：
 
-1. `rail_test_OK` —— 玩法断言用例（164 条）：地图解析、轨道连通性与树性质、
+1. `rail_test_OK` —— 玩法断言用例（172 条）：地图解析、轨道连通性与树性质、
    机车逐格前进不脱轨、分岔选择决定下一节点、脱轨回退、货物类型匹配才得分、
    送错扣分、倒计时归零判失败、关卡依次推进、3 个种子随机调度跑完不崩且
    得分与送达数自洽、**朝向映射（0/90/180/270 度、±π 等价、帧界单调、
-   精灵表源矩形）**、**送错/脱轨触发红色警示**。
+   精灵表源矩形）**、**送错/脱轨触发红色警示**、**红色警示真的画到了画面上
+   （离屏画布读像素：红边框 + 红覆盖、亮暗两相位不同、不闪时为黑）**。
 2. `rail_SAVE_OK runs=1 -> runs=2` —— 存档写两遍读得到（第二遍是新进程）。
 3. `rail_SMOKE_OK` —— 无头冒烟跑满帧自行退出。
 
 ## 当前状态
 
 三关可玩闭环已通：真实位图渲染（轨道/机车/货箱/站台/背景/HUD 面板）、8 个
-音效事件、存档与累计数据、164 条玩法断言全绿。第二轮补上了**机车朝向**
+音效事件、存档与累计数据、172 条玩法断言全绿。第二轮补上了**机车朝向**
 （16 方向精灵表）与**UI 图形化**（皮肤包 + 美术底板 + 压力表倒计时 +
 画面细节）。截图见 `build/rail/ui_run.png`（游戏画面）、
 `build/rail/ui_face_up.png` / `ui_face_right.png`（朝向对比）、
-`build/rail/ui_settings.png`（皮肤化设置面板）。
+`build/rail/ui_settings.png`（皮肤化设置面板）、
+`build/rail/ui_flash.png`（送错红色警示）、`build/rail/ui_lowtime.png`（倒计时告急）。

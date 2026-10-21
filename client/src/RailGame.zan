@@ -79,6 +79,7 @@ public class RailGame : IGuiHostLoop {
     public int puffTimer;              // 蒸汽发射计时（毫秒）
     public int flashTimer;             // 警示闪烁剩余帧数（0 = 不闪）
     public int flashKind;              // 1 = 送错站台 2 = 脱轨
+    public bool flashHold;             // 调试钩子：冻住警示闪烁（截图常驻红色警示用）
     public int levelSeconds;           // 本关时限（表盘算占比用）
     public int pressedAction;          // 当前按下的按钮动作码（-1 = 无）
     public bool freeze;                // 调试钩子：冻结机车（截图对比朝向用）
@@ -243,7 +244,9 @@ public class RailGame : IGuiHostLoop {
         //                                    用来截"朝向一眼可辨"的对比图；
         //   RAIL_SETTINGS=1                直接弹出设置浮层；
         //   RAIL_TIME=n                    把本关剩余秒数改成 n
-        //                                    （截"倒计时变红闪烁"的图）。
+        //                                    （截"倒计时变红闪烁"的图）；
+        //   RAIL_FLASH=1                   触发一次"送错站台"并冻住警示闪烁，
+        //                                    红色警示常驻（截"红色警示"的图）。
         this.ApplyFacingHook(Environment.GetEnvironmentVariable("RAIL_FACE"));
         if (Environment.GetEnvironmentVariable("RAIL_SETTINGS") == "1") {
             this.shell.Overlay().SetOpen(true);
@@ -252,6 +255,26 @@ public class RailGame : IGuiHostLoop {
         if (timeEnv != "") {
             this.timeLeft = Convert.ToInt32(timeEnv);
         }
+        this.ApplyFlashHook(Environment.GetEnvironmentVariable("RAIL_FLASH"));
+    }
+
+    // 调试钩子：让"送错站台"的红色警示在真实窗口里出现，并冻住闪烁。
+    // 做法与用例一致——把手上这批货换成与当前站台不匹配的种类，再走一次
+    // 到站判定；随后 flashHold 冻住剩余帧数，闪烁相位恒定（见
+    // RailView.DrawFlash），截图不必靠采样时机去卡那半秒窗口。
+    void ApplyFlashHook(string flag) {
+        if (flag == null || flag == "") { return; }
+        if (this.net == null || this.train == null) { return; }
+        int st = this.net.TypeAt(this.train.x, this.train.y);
+        int wrong = RailCargo.Red;
+        if (st == RailCargo.Red) { wrong = RailCargo.Blue; }
+        this.cargoType = wrong;
+        this.train.Place(this.train.x, this.train.y, RailNetwork.East);
+        this.HandleMove(RailTrain.MoveStation);
+        this.flashHold = true;
+        // 同时冻住机车：不冻的话 demo 会继续跑，几十帧后可能又撞车，
+        // 把"送错"的警示覆盖成"脱轨"（带红环），截图就不稳定了。
+        this.freeze = true;
     }
 
     // 把机车摆到一节朝指定方向连通的直轨上（非分岔、非站台），并冻结。
@@ -325,7 +348,9 @@ public class RailGame : IGuiHostLoop {
             if (this.eventTimer <= 0) { this.lastEvent = ""; }
         }
         if (this.flashTimer > 0) {
-            this.flashTimer = this.flashTimer - 1;
+            // flashHold 是截图钩子：冻住闪烁，红色警示常驻（亮相位由
+            // flashTimer 驱动，见 RailView.DrawFlash），截图不必去卡那半秒窗口。
+            if (!this.flashHold) { this.flashTimer = this.flashTimer - 1; }
             if (this.flashTimer <= 0) { this.flashKind = 0; }
         }
         this.UpdatePuffs();

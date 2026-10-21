@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Game.Kit;
+using Gui;
 
 // 铁轨快递 · RAIL 玩法断言用例。
 //
@@ -495,6 +496,74 @@ public class RailTest {
         Ok(g.flashTimer > 0, "脱轨的警示闪烁有持续帧数");
     }
 
+    // ----- 画面反馈：红色警示确实画到了画面上（离屏画布读像素）-----------
+    // 为什么要这条：只断言 flashTimer > 0 只能证明"状态被赋值"，证明不了
+    // "红色真的画出来了"——这两者之间就是渲染层，而上一轮抓不到红色闪光
+    // 的截图，根因正卡在这里。这里离屏画一次再读像素，把渲染链钉死：
+    // 送错站台 → flashTimer>0 → 画面上有红覆盖 + 红边框。
+    // 不靠截图反推，也不靠采样时机。
+    static void TestFlashRender() {
+        RailGame g = new RailGame(false);
+        g.StartGame();
+        g.cargoType = RailCargo.Blue;                 // 车上是蓝货
+        g.train.Place(g.train.x, g.train.y, RailNetwork.East);
+        g.HandleMove(RailTrain.MoveStation);          // 送错站台 → 触发红色警示
+        Ok(g.flashTimer > 0, "送错站台后警示闪烁剩余帧数 > 0");
+
+        // 亮相位（flashTimer=40 起步：4 帧亮 4 帧暗）。
+        Canvas c = new Canvas(200, 120);
+        c.Clear(0xff000000);
+        g.view.DrawFlash(c, g, 200, 120);
+        int edge = c.GetPixel(2, 2) & 0x00ffffff;     // 角落：红边框
+        int mid = c.GetPixel(100, 60) & 0x00ffffff;   // 中心：红色覆盖层
+        c.Destroy();
+
+        // 暗相位（少一帧）：红色应当仍在，但更暗。
+        g.flashTimer = g.flashTimer - 1;
+        Canvas c1 = new Canvas(200, 120);
+        c1.Clear(0xff000000);
+        g.view.DrawFlash(c1, g, 200, 120);
+        int edgeDim = c1.GetPixel(2, 2) & 0x00ffffff;
+        int midDim = c1.GetPixel(100, 60) & 0x00ffffff;
+        c1.Destroy();
+
+        int er = (edge >> 16) & 255;
+        int eg = (edge >> 8) & 255;
+        int eb = edge & 255;
+        int mr = (mid >> 16) & 255;
+        int mg = (mid >> 8) & 255;
+        int mb = mid & 255;
+        int erd = (edgeDim >> 16) & 255;
+        int egd = (edgeDim >> 8) & 255;
+        int mrd = (midDim >> 16) & 255;
+        int mgd = (midDim >> 8) & 255;
+        // 阈值按"源 alpha 参与混合"的最坏情况取值（亮相位边框 ≈168、
+        // 暗相位 ≈98；覆盖层亮相 ≈53、暗 ≈25），换后端不混合也不会翻车。
+        Ok(er > 60 && er > eg + 30 && er > eb + 30,
+            "红色警示边框真的画到了画面上（红通道占优）");
+        Ok(mr > 15 && mr > mg + 8 && mr > mb + 8,
+            "红色警示覆盖层真的画到了画面上（红通道占优）");
+        Ok(erd > 40 && erd > egd + 15,
+            "暗相位仍有红色边框（只是更暗）");
+        Ok(mrd > 8 && mrd > mgd + 4,
+            "暗相位仍有红色覆盖（只是更暗）");
+        Ok(edge != edgeDim || mid != midDim,
+            "亮相位与暗相位的画面确实不同（警示在闪）");
+
+        // 反向对照：不闪时同一张画布必须保持黑色——证明上面的红来自警示
+        // 本身，不是画布初始色，也不是别的图层。
+        g.flashTimer = 0;
+        g.flashKind = 0;
+        Canvas c2 = new Canvas(200, 120);
+        c2.Clear(0xff000000);
+        g.view.DrawFlash(c2, g, 200, 120);
+        int mid2 = c2.GetPixel(100, 60) & 0x00ffffff;
+        int edge2 = c2.GetPixel(2, 2) & 0x00ffffff;
+        c2.Destroy();
+        Eq(mid2, 0x000000, "不闪时画面没有红色覆盖");
+        Eq(edge2, 0x000000, "不闪时画面没有红色边框");
+    }
+
     static void Main() {
         TestMapParsing();
         TestConnectivity();
@@ -506,6 +575,7 @@ public class RailTest {
         TestSaveAccumulation();
         TestFacing();
         TestFlashFeedback();
+        TestFlashRender();
         Console.WriteLine("rail_test checks=" + Convert.ToString(checks)
             + " failures=" + Convert.ToString(failures));
         if (failures > 0) {

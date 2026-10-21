@@ -437,7 +437,10 @@ public class RailView {
     // 警示闪烁：送错站台 / 脱轨时的红色画面反馈。
     public void DrawFlash(Canvas c, RailGame g, int w, int h) {
         if (g.flashTimer <= 0) { return; }
-        bool blink = (g.frames / 4) % 2 == 0;
+        // 相位由**警示自身的剩余帧数**驱动（不是全局帧计数）：4 帧亮 4 帧暗，
+        // 节奏不变；但 flashHold 冻住剩余帧数时相位恒定，截图能稳定落在亮相位，
+        // 不必去卡那半秒窗口。
+        bool blink = (g.flashTimer / 4) % 2 == 0;
         int a = blink ? 0x3C : 0x1C;
         RailPaint.Fill(c, 0, 0, w, h,
             RailPalette.WithAlpha(RailPalette.Danger, a));
