@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Gui;
+using Gui.Backend;
 
 // 铁脉物流 · RAIL —— 阶段一：项目骨架 + 2.5D 等轴测铁路网。
 //
@@ -17,9 +18,11 @@ using Gui;
 // 2D 贴图批没有旋转/锚点字段——斜面轨道用预切菱形图块表达。
 //
 // 环境变量：RAIL_SMOKE=1 / RAIL_FRAMES=<n> / RAIL_CAPTURE=<path.zpx>
+// RAIL_SAVE=<目录> 覆盖存档目录（测试脚本用）。
 public class Program {
     Form form;
     App app;
+    GameShell shell;
     int frames = 0;
     int tick = 0;
 
@@ -54,14 +57,35 @@ public class Program {
         app.UseSkin("dark");
         Canvas.SetBackend(1);
         GenWorld();
+        // 外壳：存档（最远月份/累计金币/最长编组）+ 设置浮层。浮层是标准库
+        // 控件，盖在直绘画面之上——Esc 开关。
+        this.shell = new GameShell();
+        form.Add(this.shell.Overlay().Root());
+        // 起始编组跟着设置走（长编组多挂一节）。
+        wagonCount = this.shell.InitialWagons();
         app.Show();
         app.RequestRedraw();
         while (true) {
             int got = app.PollOneEvent();
-            if (got < 0) { break; }
+            if (got < 0) {
+                this.Finish();
+                break;
+            }
+            // Esc 开关设置浮层（只有真有事件时才看键码，否则会拿上一帧的
+            // 残留值反复开关）。
+            if (got == 1 && app.window.EventKind() == 4
+                && app.window.EventKeyCode() == Keys.Escape()) {
+                this.shell.Overlay().Toggle();
+            }
+            this.shell.Overlay().Tick();
             Tick();
             app.BeginFrame();
             Render();
+            // 控件树叠在直绘之上：测量 → 排布 → 绘制。
+            form.MeasureTree(app);
+            form.Arrange(app.ShapeOffX(), app.ContentTop() + app.ShapeOffY(),
+                app.ClientWidth(), app.ClientHeight() - app.ContentTop());
+            form.RenderTree(app);
             app.RenderChrome("铁脉物流 · RAIL");
             frames = frames + 1;
             string capture = Environment.GetEnvironmentVariable("RAIL_CAPTURE");
@@ -74,11 +98,21 @@ public class Program {
             if (IsSmoke() && frames >= SmokeFrames()) {
                 Console.WriteLine("RAIL_SMOKE_OK frames=" + Convert.ToString(frames)
                     + " cargo=" + Convert.ToString(cargo));
+                this.Finish();
                 break;
             }
             app.RequestRedraw();
             Window.SleepMs(16);
         }
+    }
+
+    // 收尾：存档落盘 + 打印读回值（测试脚本靠这行验证"跑两遍读得到"）。
+    void Finish() {
+        this.shell.Save();
+        Console.WriteLine("RAIL_SAVE month=" + Convert.ToString(this.shell.BestMonth())
+            + " coins=" + Convert.ToString(this.shell.Coins())
+            + " wagons=" + Convert.ToString(this.shell.BestWagons())
+            + " runs=" + Convert.ToString(this.shell.Runs()));
     }
 
     bool IsSmoke() {
@@ -118,6 +152,12 @@ public class Program {
 
     void Tick() {
         tick = tick + 1;
+        // 货舱上限跟着设置走（长编组）。
+        cargoMax = this.shell.CargoMax();
+        // 进度随时进存档：最远月份、累计金币、最长编组。
+        this.shell.RecordMonth(year * 12 + month);
+        this.shell.RecordCoins(coins);
+        this.shell.RecordWagons(wagonCount);
         trainT = trainT + 0.02f;
         if (trainT > 1.0f) { trainT = 0.0f; }
         if (tick % 30 == 0) {
@@ -125,10 +165,18 @@ public class Program {
             if (cargo > cargoMax) { cargo = cargoMax; }
         }
         if (tick % 240 == 0) {
-            coins = coins + cargo / 8;
+            // 结算：难度档决定每单位货物换多少金币——难度越高越不赚钱。
+            coins = coins + cargo / this.shell.CoinDivisor();
             cargo = 0;
             month = month + 1;
             if (month > 12) { month = 1; year = year + 1; }
+            // 事故：每 4 个月一次，难度越高损失越大。
+            if (month % 4 == 0) { coins = coins - this.shell.AccidentLoss(); }
+            // 维护费：开启后每月固定支出。
+            if (this.shell.Maintenance()) { coins = coins - 120; }
+            if (coins < 0) { coins = 0; }
+            // 每年年初多挂一节车厢（上限 8）。
+            if (month == 1 && wagonCount < 8) { wagonCount = wagonCount + 1; }
         }
     }
 
@@ -195,12 +243,16 @@ public class Program {
             c.FillRect(wx - 12, wy - 22, 24, 12, 0xFF2A5F8A);
         }
         // HUD
-        c.FillRect(0, 0, w, 72, 0xD0101824);
+        c.FillRect(0, 0, w, 96, 0xD0101824);
         c.DrawText(24, 16, "铁脉物流 · 2.5D 等轴测铁路网", 0xFFD9C27A, 20);
         c.DrawText(24, 44, "资金 " + Convert.ToString(coins)
             + "   载货 " + Convert.ToString(cargo) + "/" + Convert.ToString(cargoMax)
             + "   " + Convert.ToString(year) + "年" + Convert.ToString(month) + "月"
             + "   编组 " + Convert.ToString(wagonCount), 0xFFC8D8E8, 15);
+        c.DrawText(24, 70, "难度 " + Convert.ToString(this.shell.Difficulty())
+            + "   维护费 " + (this.shell.Maintenance() ? "开" : "关")
+            + "   长编组 " + (this.shell.LongHaul() ? "开" : "关"), 0xFF9FB0C6, 14);
+        c.DrawText(24, h - 52, "Esc 打开设置", 0xC0C8D8E8, 14);
         c.DrawText(24, h - 28, "TODO 素材：轨道 8 变体 + 车辆 6 型 + 建筑 12 + 地形 8 + 视差天空 + 车轮/汽笛音效",
             0x99C8D8E8, 14);
     }
