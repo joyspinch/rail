@@ -1,0 +1,207 @@
+using System;
+using System.Collections.Generic;
+using Gui;
+
+// 铁脉物流 · RAIL —— 阶段一：项目骨架 + 2.5D 等轴测铁路网。
+//
+// 参考源：OpenTTD（源码 GPL-2.0+）。⚠️ 素材红线：OpenTTD 仓库里的
+// orig_*.obg / orig_extra 是 Transport Tycoon Deluxe 原版衍生素材，
+// 不可自由再用；media/baseset/openttd/ 下的 33 png + 22 nfo 才是
+// 自制重绘（GPL-2.0）。本项目走"只抄经济/物流/信号规则、美术自制"路线：
+// 轨道铺设、货车编组、站点吞吐、产业链、季节与经济周期。
+//
+// Zan 路线：2.5D 等轴测（2:1 菱形）+ 2D 贴图批。
+// 关键能力已核实：Zan.Game.Arpg.IsoTileMap 提供 2:1 菱形的
+// GridToWorld / WorldToGrid / GetVisibleGridBounds；YSortLayer 按脚底 Y
+// 深度排序；InputMapper.GetIsoGridMouse 做屏幕→格拾取。
+// 2D 贴图批没有旋转/锚点字段——斜面轨道用预切菱形图块表达。
+//
+// 环境变量：RAIL_SMOKE=1 / RAIL_FRAMES=<n> / RAIL_CAPTURE=<path.zpx>
+public class Program {
+    Form form;
+    App app;
+    int frames = 0;
+    int tick = 0;
+
+    const int GW = 20;
+    const int GH = 14;
+    const int TileW = 64;
+    const int TileH = 32;
+
+    // 地形：0 草地 1 森林 2 矿场 3 城镇 4 河流
+    int[] terrain = new int[GW * GH];
+    // 轨道层
+    bool[] track = new bool[GW * GH];
+    bool[] station = new bool[GW * GH];
+
+    // 列车
+    float trainT = 0.0f;
+    int wagonCount = 4;
+    int cargo = 0;
+    int cargoMax = 400;
+    int coins = 5000;
+    int month = 3;
+    int year = 1;
+
+    static void Main() {
+        Program p = new Program();
+        p.Run();
+    }
+
+    void Run() {
+        form = Form.CreateDark("铁脉物流 · RAIL", 1280, 800);
+        app = form.GetApp();
+        app.UseSkin("dark");
+        Canvas.SetBackend(1);
+        GenWorld();
+        app.Show();
+        app.RequestRedraw();
+        while (true) {
+            int got = app.PollOneEvent();
+            if (got < 0) { break; }
+            Tick();
+            app.BeginFrame();
+            Render();
+            app.RenderChrome("铁脉物流 · RAIL");
+            frames = frames + 1;
+            string capture = Environment.GetEnvironmentVariable("RAIL_CAPTURE");
+            if (capture != "" && frames == 60) {
+                app.canvas.WritePixels(capture, 0, 0, app.ClientWidth(), app.ClientHeight());
+                Console.WriteLine("RAIL_CAPTURE " + Convert.ToString(app.ClientWidth())
+                    + "x" + Convert.ToString(app.ClientHeight()));
+            }
+            app.PresentFrame();
+            if (IsSmoke() && frames >= SmokeFrames()) {
+                Console.WriteLine("RAIL_SMOKE_OK frames=" + Convert.ToString(frames)
+                    + " cargo=" + Convert.ToString(cargo));
+                break;
+            }
+            app.RequestRedraw();
+            Window.SleepMs(16);
+        }
+    }
+
+    bool IsSmoke() {
+        return Environment.GetEnvironmentVariable("RAIL_SMOKE") == "1";
+    }
+
+    int SmokeFrames() {
+        string v = Environment.GetEnvironmentVariable("RAIL_FRAMES");
+        if (v == "") { return 90; }
+        return Convert.ToInt32(v);
+    }
+
+    // 等轴测投影：2:1 菱形（IsoTileMap 的 GridToWorld 口径）
+    void GridToWorld(int gx, int gy, out int sx, out int sy) {
+        sx = (gx - gy) * (TileW / 2);
+        sy = (gx + gy) * (TileH / 2);
+    }
+
+    void GenWorld() {
+        for (int i = 0; i < terrain.Length; i = i + 1) { terrain[i] = 0; }
+        for (int y = 4; y < 9; y = y + 1) {
+            for (int x = 12; x < 18; x = x + 1) { terrain[y * GW + x] = 1; }
+        }
+        for (int y = 1; y < 5; y = y + 1) {
+            for (int x = 2; x < 7; x = x + 1) { terrain[y * GW + x] = 2; }
+        }
+        for (int y = 10; y < 13; y = y + 1) {
+            for (int x = 8; x < 13; x = x + 1) { terrain[y * GW + x] = 3; }
+        }
+        for (int x = 0; x < GW; x = x + 1) { terrain[6 * GW + x] = 4; }
+        // 主干线
+        for (int x = 3; x < 13; x = x + 1) { track[6 * GW + x] = true; }
+        for (int y = 6; y < 12; y = y + 1) { track[y * GW + 12] = true; }
+        station[6 * GW + 4] = true;
+        station[11 * GW + 12] = true;
+    }
+
+    void Tick() {
+        tick = tick + 1;
+        trainT = trainT + 0.02f;
+        if (trainT > 1.0f) { trainT = 0.0f; }
+        if (tick % 30 == 0) {
+            cargo = cargo + 12;
+            if (cargo > cargoMax) { cargo = cargoMax; }
+        }
+        if (tick % 240 == 0) {
+            coins = coins + cargo / 8;
+            cargo = 0;
+            month = month + 1;
+            if (month > 12) { month = 1; year = year + 1; }
+        }
+    }
+
+    int TerrainColor(int t) {
+        if (t == 0) { return 0xFF4E7A46; }
+        if (t == 1) { return 0xFF2F5730; }
+        if (t == 2) { return 0xFF6B5A4A; }
+        if (t == 3) { return 0xFF8A8378; }
+        return 0xFF3A6B8A;
+    }
+
+    // 用扫描线填一个等轴测菱形（Canvas 没有多边形填充原语）
+    void FillDiamond(Canvas c, int cx, int cy, int halfW, int halfH, int color) {
+        for (int row = -halfH; row <= halfH; row = row + 1) {
+            int t = halfH - row;
+            int span = halfW * t / halfH;
+            c.FillRect(cx - span, cy + row, span * 2, 1, color);
+        }
+    }
+
+    void Render() {
+        Canvas c = app.canvas;
+        int w = c.Width();
+        int h = c.Height();
+        c.FillVGrad(0, 0, w, h, 0xFF20304A, 0xFF3E5A82);
+        int ox = w / 2;
+        int oy = 150;
+        // 先画地面菱形（整块地图一次扫描线填充）
+        int gx0; int gy0; int gx1; int gy1;
+        GridToWorld(0, 0, out gx0, out gy0);
+        GridToWorld(GW, 0, out gx1, out gy1);
+        FillDiamond(c, ox, oy + (GH * TileH) / 2, (GW + GH) * TileW / 4, (GW + GH) * TileH / 4, 0xFF4E7A46);
+        // 再画地形格与轨道（按 x+y 排序保证前后遮挡正确）
+        for (int sum = 0; sum <= GW + GH; sum = sum + 1) {
+            for (int gx = 0; gx < GW; gx = gx + 1) {
+                int gy = sum - gx;
+                if (gy < 0 || gy >= GH) { continue; }
+                int sx; int sy;
+                GridToWorld(gx, gy, out sx, out sy);
+                int cx = ox + sx;
+                int cy = oy + sy;
+                FillDiamond(c, cx, cy, TileW / 2, TileH / 2, TerrainColor(terrain[gy * GW + gx]));
+                if (track[gy * GW + gx]) {
+                    FillDiamond(c, cx, cy, TileW / 2 - 4, TileH / 2 - 2, 0xFF6B5A4A);
+                    FillDiamond(c, cx, cy, 5, 3, 0xFFB9A98C);
+                }
+                if (station[gy * GW + gx]) {
+                    FillDiamond(c, cx, cy - 18, 18, 10, 0xFFC9C0AE);
+                    c.FillRect(cx - 14, cy - 30, 28, 14, 0xFF8A4A3A);
+                }
+            }
+        }
+        // 列车（等轴测小车厢）
+        int tx; int ty;
+        float p = trainT * (GW + GH);
+        int seg = (int)p;
+        int fgx = seg; int fgy = 0;
+        if (fgx > GW) { fgy = fgx - GW; fgx = GW; }
+        GridToWorld(fgx, fgy, out tx, out ty);
+        for (int i = 0; i < wagonCount; i = i + 1) {
+            int wx = ox + tx - i * (TileW / 2);
+            int wy = oy + ty - i * (TileH / 2);
+            FillDiamond(c, wx, wy - 10, 16, 8, 0xFF3E8FD6);
+            c.FillRect(wx - 12, wy - 22, 24, 12, 0xFF2A5F8A);
+        }
+        // HUD
+        c.FillRect(0, 0, w, 72, 0xD0101824);
+        c.DrawText(24, 16, "铁脉物流 · 2.5D 等轴测铁路网", 0xFFD9C27A, 20);
+        c.DrawText(24, 44, "资金 " + Convert.ToString(coins)
+            + "   载货 " + Convert.ToString(cargo) + "/" + Convert.ToString(cargoMax)
+            + "   " + Convert.ToString(year) + "年" + Convert.ToString(month) + "月"
+            + "   编组 " + Convert.ToString(wagonCount), 0xFFC8D8E8, 15);
+        c.DrawText(24, h - 28, "TODO 素材：轨道 8 变体 + 车辆 6 型 + 建筑 12 + 地形 8 + 视差天空 + 车轮/汽笛音效",
+            0x99C8D8E8, 14);
+    }
+}
