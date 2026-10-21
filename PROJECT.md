@@ -51,12 +51,13 @@ pwsh -File client/tools/build.ps1           # → build/rail/Rail.exe
 pwsh -File client/tools/test.ps1            # 三段：玩法断言 / 存档两遍 / 无头冒烟
 ```
 
-项目在仓库外，编译时 `--package-project` 指向 zan-lang 仓库（或任何含
-`packages/` 的干净 worktree）：
+项目在仓库外，编译时 `--package-project` 指向 zan-lang 仓库（公共包在它的
+`packages/` 下；一律用主仓，不再用 worktree 副本——副本停在旧 commit，
+公共包一改就追不上）：
 
 ```powershell
 pwsh -File client/tools/build.ps1 -Compiler D:/project/zan-lang/build/zanc.exe `
-    -PackageProject D:/project/zan-head
+    -PackageProject D:/project/zan-lang
 ```
 
 ### 环境变量

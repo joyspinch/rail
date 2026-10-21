@@ -43,7 +43,7 @@ function Resolve-PackageProject([string]$projectRoot) {
     if ($env:ZAN_HOME -and (Test-Path (Join-Path $env:ZAN_HOME 'packages'))) { return $env:ZAN_HOME }
     $dir = Split-Path -Parent $projectRoot
     for ($i = 0; $i -lt 4 -and $dir; $i = $i + 1) {
-        foreach ($name in @('zan-lang', 'zan-head')) {
+        foreach ($name in @('zan-lang')) {
             $c = Join-Path $dir $name
             if (Test-Path (Join-Path $c 'packages')) { return $c }
         }
