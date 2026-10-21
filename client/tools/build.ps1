@@ -16,10 +16,43 @@ param(
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
 $repo = Split-Path -Parent $project
-if (-not $Compiler) {
-    $local = if ($env:ZAN_HOME) { Join-Path $env:ZAN_HOME 'build/zanc.exe' } else { '' }
-    if ($local -and (Test-Path $local)) { $Compiler = $local } else { $Compiler = (Get-Command zanc -ErrorAction Stop).Source }
+# 编译器查找顺序：-Compiler → $env:ZANC → $env:ZAN_HOME\build → PATH →
+# 包工程旁边的 zan-lang 仓库（仓库外的独立项目常用 worktree 做包源，
+# 编译器只在主仓库里编译过）。
+function Resolve-Zanc([string]$explicit, [string]$packageProject) {
+    if ($explicit) { return $explicit }
+    if ($env:ZANC) { return $env:ZANC }
+    if ($env:ZAN_HOME) {
+        $p = Join-Path $env:ZAN_HOME 'build/zanc.exe'
+        if (Test-Path $p) { return $p }
+    }
+    $onPath = Get-Command zanc -ErrorAction SilentlyContinue
+    if ($onPath) { return $onPath.Source }
+    $candidates = @()
+    if ($packageProject) {
+        $parent = Split-Path -Parent $packageProject
+        if ($parent) { $candidates += (Join-Path $parent 'zan-lang/build/zanc.exe') }
+    }
+    $candidates += (Join-Path $repo 'build/zanc.exe')
+    foreach ($c in $candidates) {
+        if (Test-Path $c) { return $c }
+    }
+    throw '找不到 zanc 编译器：请用 -Compiler 指定，或设置 $env:ZANC / $env:ZAN_HOME'
 }
+function Resolve-PackageProject([string]$projectRoot) {
+    if ($env:ZAN_HOME -and (Test-Path (Join-Path $env:ZAN_HOME 'packages'))) { return $env:ZAN_HOME }
+    $dir = Split-Path -Parent $projectRoot
+    for ($i = 0; $i -lt 4 -and $dir; $i = $i + 1) {
+        foreach ($name in @('zan-lang', 'zan-head')) {
+            $c = Join-Path $dir $name
+            if (Test-Path (Join-Path $c 'packages')) { return $c }
+        }
+        $dir = Split-Path -Parent $dir
+    }
+    return ''
+}
+$Compiler = Resolve-Zanc $Compiler $PackageProject
+if (-not $PackageProject) { $PackageProject = Resolve-PackageProject $repo }
 if (-not $Stdlib -and $env:ZAN_HOME) { $Stdlib = Join-Path $env:ZAN_HOME 'stdlib' }
 if (-not $PackageProject) { if ($env:ZAN_HOME) { $PackageProject = $env:ZAN_HOME } else { throw '需要 $env:ZAN_HOME 指向 zan-lang 仓库（公共包在它的 packages/ 下）' } }
 if (-not $Output) { $Output = Join-Path $repo 'build/rail' }

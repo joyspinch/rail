@@ -17,11 +17,47 @@ param(
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
 $repo = Split-Path -Parent $project
-if (-not $Compiler) {
-    $local = if ($env:ZAN_HOME) { Join-Path $env:ZAN_HOME 'build/zanc.exe' } else { '' }
-    if ($local -and (Test-Path $local)) { $Compiler = $local } else { $Compiler = (Get-Command zanc -ErrorAction Stop).Source }
+# 先定位公共包所在仓库（独立项目常用 worktree 或同级仓库当包源）：
+# -PackageProject → $env:ZAN_HOME → 从项目根往上找带 packages/ 的 zan-lang。
+if (-not $PackageProject) {
+    if ($env:ZAN_HOME -and (Test-Path (Join-Path $env:ZAN_HOME 'packages'))) {
+        $PackageProject = $env:ZAN_HOME
+    } else {
+        $dir = Split-Path -Parent $repo
+        for ($i = 0; $i -lt 4 -and $dir; $i = $i + 1) {
+            $hit = ''
+            foreach ($name in @('zan-lang', 'zan-head')) {
+                $c = Join-Path $dir $name
+                if (Test-Path (Join-Path $c 'packages')) { $hit = $c; break }
+            }
+            if ($hit) { $PackageProject = $hit; break }
+            $dir = Split-Path -Parent $dir
+        }
+    }
 }
-if (-not $PackageProject) { if ($env:ZAN_HOME) { $PackageProject = $env:ZAN_HOME } else { throw '需要 $env:ZAN_HOME 指向 zan-lang 仓库（公共包在它的 packages/ 下）' } }
+if (-not $PackageProject) { throw '找不到公共包所在仓库：用 -PackageProject 指定，或设置 $env:ZAN_HOME' }
+# 编译器查找：-Compiler → $env:ZANC → $env:ZAN_HOME\build → PATH → 包工程
+# 旁边的 zan-lang 仓库（worktree 里没有编译产物，编译器只在主仓库）。
+if (-not $Compiler) {
+    if ($env:ZANC) { $Compiler = $env:ZANC }
+    elseif ($env:ZAN_HOME -and (Test-Path (Join-Path $env:ZAN_HOME 'build/zanc.exe'))) {
+        $Compiler = Join-Path $env:ZAN_HOME 'build/zanc.exe'
+    }
+    else {
+        $onPath = Get-Command zanc -ErrorAction SilentlyContinue
+        if ($onPath) { $Compiler = $onPath.Source }
+        else {
+            $cands = @()
+            $parent = Split-Path -Parent $PackageProject
+            if ($parent) { $cands += (Join-Path $parent 'zan-lang/build/zanc.exe') }
+            $cands += (Join-Path $repo 'build/zanc.exe')
+            foreach ($c in $cands) {
+                if (Test-Path $c) { $Compiler = $c; break }
+            }
+        }
+    }
+}
+if (-not $Compiler) { throw '找不到 zanc 编译器：请用 -Compiler 指定，或设置 $env:ZANC / $env:ZAN_HOME' }
 $out = Join-Path $repo 'build/rail'
 & (Join-Path $PSScriptRoot 'build.ps1') -Compiler $Compiler -PackageProject $PackageProject -Output $out
 $exe = Join-Path $out 'Rail.exe'
