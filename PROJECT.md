@@ -60,6 +60,18 @@ pwsh -File client/tools/build.ps1 -Compiler D:/project/zan-lang/build/zanc.exe `
     -PackageProject D:/project/zan-lang
 ```
 
+### 皮肤基线：为什么 exe 旁不摆 base.css
+
+zanc 会自动把 stdlib 的 Gui 皮肤基线（`base.css` 与 dark/light）**内嵌**进 exe
+（`src/compiler/main.c` 的 skins 自动内嵌分支；只有暂存的 `skins/` 目录里含**完整
+base.css 替身**时才跳过自动内嵌）。运行时 `Skin.BaseCss()` 是**磁盘优先、内嵌
+兜底**——所以 exe 旁那份磁盘 base.css 反而会**盖住** exe 内嵌的新基线，
+"内嵌兜底到底生效没有"这件事就永远测不出来。
+
+因此 `build.ps1` 只拷**自己的**皮肤包（`skins/rail/skin.css`），不拷基线，并主动
+清掉输出目录里遗留的旧 `skins/base.css`。样板照 `D:/project/games/voxel/client/
+tools/build.ps1`。
+
 ### 环境变量
 
 | 变量 | 作用 |
@@ -93,7 +105,7 @@ client/
     GameShell.zan   存档（最高得分/累计送达/通关次数/出场）+ 设置 + 设置浮层
   assets/           16 张位图 + assets/sfx/ 8 个 WAV + assets/skins/rail/skin.css
   tests/rail_test.zan  172 条玩法断言
-  tools/build.ps1   编译（顺带把皮肤包拷到 exe 同级；控件基线 base.css 由编译器内嵌）
+  tools/build.ps1   编译（顺带把皮肤包拷到 exe 同级；控件基线 base.css 由编译器内嵌，不拷到磁盘）
   tools/test.ps1    三段测试
   tools/bake_facing.py / bake_ui.py / bake_bg.py / postprocess.py
                     素材生成脚本（方向精灵表 / UI 底板 / 背景层次 / AI 原图后处理）
