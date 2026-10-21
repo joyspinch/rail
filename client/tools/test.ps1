@@ -17,7 +17,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
 $repo = Split-Path -Parent $project
-# 先定位公共包所在仓库（独立项目常用 worktree 或同级仓库当包源）：
+# 先定位公共包所在仓库（**只用主仓库 zan-lang**，不要 worktree 副本，副本会漂移）：
 # -PackageProject → $env:ZAN_HOME → 从项目根往上找带 packages/ 的 zan-lang。
 if (-not $PackageProject) {
     if ($env:ZAN_HOME -and (Test-Path (Join-Path $env:ZAN_HOME 'packages'))) {
@@ -37,7 +37,7 @@ if (-not $PackageProject) {
 }
 if (-not $PackageProject) { throw '找不到公共包所在仓库：用 -PackageProject 指定，或设置 $env:ZAN_HOME' }
 # 编译器查找：-Compiler → $env:ZANC → $env:ZAN_HOME\build → PATH → 包工程
-# 旁边的 zan-lang 仓库（worktree 里没有编译产物，编译器只在主仓库）。
+# 旁边的 zan-lang 仓库（编译器只在主仓库里编译过，副本没有编译产物）。
 if (-not $Compiler) {
     if ($env:ZANC) { $Compiler = $env:ZANC }
     elseif ($env:ZAN_HOME -and (Test-Path (Join-Path $env:ZAN_HOME 'build/zanc.exe'))) {

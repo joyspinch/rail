@@ -17,8 +17,8 @@ $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
 $repo = Split-Path -Parent $project
 # 编译器查找顺序：-Compiler → $env:ZANC → $env:ZAN_HOME\build → PATH →
-# 包工程旁边的 zan-lang 仓库（仓库外的独立项目常用 worktree 做包源，
-# 编译器只在主仓库里编译过）。
+# 包工程旁边的 zan-lang 仓库（公共包只认主仓库 zan-lang；**不要**用 git worktree
+# 或 detached HEAD 副本当包源——副本会与主仓漂移）。
 function Resolve-Zanc([string]$explicit, [string]$packageProject) {
     if ($explicit) { return $explicit }
     if ($env:ZANC) { return $env:ZANC }
