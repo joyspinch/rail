@@ -92,7 +92,7 @@ client/
     GameShell.zan   存档（最高得分/累计送达/通关次数/出场）+ 设置 + 设置浮层
   assets/           16 张位图 + assets/sfx/ 8 个 WAV + assets/skins/rail/skin.css
   tests/rail_test.zan  164 条玩法断言
-  tools/build.ps1   编译（顺带把皮肤包与 base.css 拷到 exe 同级）
+  tools/build.ps1   编译（顺带把皮肤包拷到 exe 同级；控件基线 base.css 由编译器内嵌）
   tools/test.ps1    三段测试
   tools/bake_facing.py / bake_ui.py / bake_bg.py / postprocess.py
                     素材生成脚本（方向精灵表 / UI 底板 / 背景层次 / AI 原图后处理）
