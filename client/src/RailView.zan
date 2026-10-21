@@ -1,0 +1,361 @@
+using System;
+using System.Collections.Generic;
+using Gui;
+using Game.Kit;
+
+// 一个可点的动作按钮（游戏层建列表，视图层画）。
+public class RailButton {
+    public string label;
+    public int kind;      // 0=普通 1=强调
+    public int x;
+    public int y;
+    public int w;
+    public int h;
+    public bool enabled;
+    public int action;    // 按钮动作码（由游戏层解释）
+
+    public RailButton(string label, int kind, int x, int y, int w, int h, bool enabled, int action) {
+        this.label = label;
+        this.kind = kind;
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+        this.enabled = enabled;
+        this.action = action;
+    }
+}
+
+// 画面层：铁路网、机车、货物、站台、HUD、菜单与结算面板。
+//
+// 贴图全部走位图（CDraw.BlitImage），找不到贴图才退回纯色绘制——
+// 资源缺失不该让游戏崩掉，但资源到位时画面必须真的是位图。
+public class RailView {
+    public const int DesignW = 1280;
+    public const int DesignH = 800;
+    public const int HudH = 76;
+
+    public string bgPath = "";
+    public string trackHPath = "";
+    public string trackVPath = "";
+    public string switchNPath = "";
+    public string switchSPath = "";
+    public string trainPath = "";
+    public string cargoPath = "";
+    public string stationPath = "";
+    public string panelPath = "";
+    public bool assetsReady;
+
+    public void LoadAssets() {
+        this.bgPath = RailView.Find("assets/bg_land.png");
+        this.trackHPath = RailView.Find("assets/track_h.png");
+        this.trackVPath = RailView.Find("assets/track_v.png");
+        this.switchNPath = RailView.Find("assets/switch_n.png");
+        this.switchSPath = RailView.Find("assets/switch_s.png");
+        this.trainPath = RailView.Find("assets/train.png");
+        this.cargoPath = RailView.Find("assets/cargo.png");
+        this.stationPath = RailView.Find("assets/station.png");
+        this.panelPath = RailView.Find("assets/panel.png");
+        this.assetsReady = this.trainPath != "" && this.stationPath != "";
+    }
+
+    static string Find(string rel) {
+        string p = Assets.Find(rel);
+        if (!File.Exists(p)) { return ""; }
+        return p;
+    }
+
+    // ----- 画面块 -------------------------------------------------------
+
+    // 背景大图（找不到就退回渐变底）。
+    public void DrawBackground(Canvas c, int w, int h) {
+        if (this.bgPath != "") {
+            RailPaint.Blit(c, this.bgPath, 0, 0, w, h);
+        } else {
+            c.FillVGrad(0, 0, w, h, 0xFF2C3E2A, 0xFF16210F);
+        }
+        // 压暗一层，保证轨道与 HUD 读得清。
+        RailPaint.Fill(c, 0, 0, w, h, 0x66000000);
+    }
+
+    // 顶栏：关卡 / 得分 / 送货 / 倒计时 / 车上货物。
+    public void DrawHud(Canvas c, RailGame g, int w) {
+        if (this.panelPath != "") {
+            RailPaint.Blit(c, this.panelPath, 0, 0, w, RailView.HudH);
+        } else {
+            RailPaint.Fill(c, 0, 0, w, RailView.HudH, 0xE0181C22);
+        }
+        RailPaint.Fill(c, 0, RailView.HudH - 2, w, 2, 0x66C9A227);
+
+        RailPaint.Text(c, "第" + Convert.ToString(g.levelIndex + 1) + "关 · "
+            + RailGame.LevelName(g.levelIndex), 20, 12, 20, 0xFFF2C14E);
+        RailPaint.Text(c, "得分 " + Convert.ToString(g.score)
+            + "    本关 " + Convert.ToString(g.cargoIndex)
+            + "/" + Convert.ToString(g.CargoTotal())
+            + "    累计送达 " + Convert.ToString(g.delivered),
+            20, 40, 15, 0xFFC8D8E8);
+
+        string timer = "剩余 " + Convert.ToString(g.timeLeft) + " 秒";
+        int timerColor = g.timeLeft <= 10 ? 0xFFE05A4E : 0xFFE8E0CC;
+        RailPaint.Text(c, timer, w - 190, 14, 18, timerColor);
+        RailPaint.Text(c, "用时 " + Convert.ToString(g.elapsed) + " 秒", w - 190, 42, 14, 0xFF9FB0C6);
+
+        // 车上货物：色块 + 名称 + 目标站台需求。
+        int bx = w / 2 - 120;
+        int cargoColor = RailCargo.ColorOf(g.cargoType);
+        RailPaint.FillRound(c, bx, 16, 26, 26, 4, cargoColor);
+        RailPaint.Text(c, "车上：" + RailCargo.FullNameOf(g.cargoType), bx + 34, 16, 16, 0xFFE8E0CC);
+        int dist = g.TargetDistance();
+        string target = "卸给同色站台";
+        if (dist >= 0) { target = "目标 " + RailCargo.NameOf(g.cargoType) + "台 · " + Convert.ToString(dist) + " 格"; }
+        RailPaint.Text(c, target, bx + 34, 40, 14, 0xFF9FB0C6);
+    }
+
+    // 过关 / 失败 / 通关横幅。
+    public void DrawBanner(Canvas c, RailGame g, int w, int h) {
+        if (g.phase == RailGame.PhaseDispatch) { return; }
+        string title = "";
+        if (g.phase == RailGame.PhaseClear) { title = "关卡完成！"; }
+        if (g.phase == RailGame.PhaseFail) { title = "调度失败"; }
+        if (g.phase == RailGame.PhaseWin) { title = "全线贯通！"; }
+        RailPaint.Fill(c, 0, h / 2 - 74, w, 148, 0x99000000);
+        RailPaint.Fill(c, 0, h / 2 - 74, w, 2, 0x66C9A227);
+        RailPaint.Fill(c, 0, h / 2 + 72, w, 2, 0x66C9A227);
+        RailPaint.TextCentered(c, title, w / 2, h / 2 - 44, w, 44, 0xFFF2C14E);
+        RailPaint.TextCentered(c, g.lastEvent, w / 2, h / 2 + 16, w, 18, 0xFFE8E0CC);
+    }
+
+    // 铁路网：轨道 / 分岔 / 站台 / 机车 / 货物。
+    public void DrawMap(Canvas c, RailGame g, int w, int h) {
+        RailNetwork net = g.net;
+        if (net == null) { return; }
+        int cell = g.CellSize();
+        int ox = g.MapLeft(w);
+        int oy = g.MapTop();
+
+        // 轨道与站台。
+        for (int y = 0; y < net.height; y = y + 1) {
+            for (int x = 0; x < net.width; x = x + 1) {
+                if (!net.IsTrack(x, y)) { continue; }
+                int kind = net.KindAt(x, y);
+                int px = ox + x * cell;
+                int py = oy + y * cell;
+                if (kind == RailNetwork.KindPlatform) {
+                    this.DrawStation(c, net.TypeAt(x, y), px, py, cell, true);
+                    continue;
+                }
+                if (kind == RailNetwork.KindDepot) {
+                    this.DrawStation(c, -1, px, py, cell, false);
+                    continue;
+                }
+                if (net.IsSwitch(x, y)) {
+                    int branch = net.BranchDir(x, y);
+                    string sp = "";
+                    if (branch == RailNetwork.North) { sp = this.switchNPath; }
+                    if (branch == RailNetwork.South) { sp = this.switchSPath; }
+                    if (sp != "") {
+                        RailPaint.Blit(c, sp, px, py, cell, cell);
+                    } else {
+                        RailPaint.Fill(c, px + 2, py + cell / 2 - 3, cell - 4, 6, 0xFF6B5A4A);
+                    }
+                    continue;
+                }
+                if (net.HorizontalAxis(x, y)) {
+                    if (this.trackHPath != "") {
+                        RailPaint.Blit(c, this.trackHPath, px, py, cell, cell);
+                    } else {
+                        RailPaint.Fill(c, px, py + cell / 2 - 3, cell, 6, 0xFF6B5A4A);
+                    }
+                } else {
+                    if (this.trackVPath != "") {
+                        RailPaint.Blit(c, this.trackVPath, px, py, cell, cell);
+                    } else {
+                        RailPaint.Fill(c, px + cell / 2 - 3, py, 6, cell, 0xFF6B5A4A);
+                    }
+                }
+            }
+        }
+
+        // 分岔预览：把玩家正在瞄的那条支线整条点亮。
+        if (g.train != null && g.train.waiting && g.hoverBranch >= 0) {
+            int dir = g.hoverBranch == 0 ? g.train.LeftOption() : g.train.RightOption();
+            if (dir >= 0) {
+                int cx = g.train.x + RailNetwork.Dx(dir);
+                int cy = g.train.y + RailNetwork.Dy(dir);
+                for (int k = 0; k < 12; k = k + 1) {
+                    if (!net.IsTrack(cx, cy)) { break; }
+                    int px = ox + cx * cell;
+                    int py = oy + cy * cell;
+                    RailPaint.FillRound(c, px + 2, py + 2, cell - 4, cell - 4, 4,
+                        g.hoverBranch == 0 ? 0x55A8E0FF : 0x55FFC46B);
+                    if (net.IsSwitch(cx, cy)) { break; }
+                    cx = cx + RailNetwork.Dx(dir);
+                    cy = cy + RailNetwork.Dy(dir);
+                }
+            }
+        }
+
+        // 调度建议：标出通往目标站台的那条支线（设置里可关）。
+        if (g.train != null && g.train.waiting && g.shell.Hint()) {
+            int sd = g.SuggestedDir();
+            if (sd >= 0) {
+                int hx = g.train.x + RailNetwork.Dx(sd);
+                int hy = g.train.y + RailNetwork.Dy(sd);
+                if (net.IsTrack(hx, hy)) {
+                    int hcx = ox + hx * cell + cell / 2;
+                    int hcy = oy + hy * cell + cell / 2;
+                    RailPaint.FillCircle(c, hcx, hcy, cell / 3, 0x33FFE9A8);
+                    RailPaint.Circle(c, hcx, hcy, cell / 3, 0xAAFFE9A8, 2);
+                }
+            }
+        }
+
+        // 机车 + 车载货箱。
+        if (g.train != null) {
+            int tx = ox + g.train.x * cell;
+            int ty = oy + g.train.y * cell;
+            int size = (int)(cell * 1.35f);
+            int dx = tx + (cell - size) / 2;
+            int dy = ty + (cell - size) / 2;
+            // 底衬：让深色机车在绿底上也能一眼看见。
+            RailPaint.FillRound(c, dx + 4, dy + 6, size - 8, size - 12, 8, 0x55000000);
+            if (this.trainPath != "") {
+                RailPaint.Blit(c, this.trainPath, dx, dy, size, size);
+            } else {
+                RailPaint.FillRound(c, dx + 4, dy + 6, size - 8, size - 12, 6, 0xFF3E8FD6);
+            }
+            // 朝向指示：车头前方的小光点（贴图本身是俯视对称的）。
+            int hx = g.train.x + RailNetwork.Dx(g.train.dir);
+            int hy = g.train.y + RailNetwork.Dy(g.train.dir);
+            if (net.IsTrack(hx, hy)) {
+                RailPaint.FillCircle(c, ox + hx * cell + cell / 2, oy + hy * cell + cell / 2, 4, 0xFFFFE9A8);
+            }
+            // 货箱：车尾挂的小箱（不压住机车本体），色框表示货物类型。
+            int crate = (int)(cell * 0.36f);
+            int cx0 = tx + cell - crate - 1;
+            int cy0 = ty + 1;
+            RailPaint.FillRound(c, cx0 - 1, cy0 - 1, crate + 2, crate + 2, 3,
+                RailCargo.ColorOf(g.cargoType));
+            if (this.cargoPath != "") {
+                RailPaint.Blit(c, this.cargoPath, cx0, cy0, crate, crate);
+            } else {
+                RailPaint.FillRound(c, cx0 + 2, cy0 + 2, crate - 4, crate - 4, 2, 0xFF9C7A4E);
+            }
+        }
+    }
+
+    // 站台：位图 + 需求类型徽标。
+    void DrawStation(Canvas c, int type, int px, int py, int cell, bool showBadge) {
+        int size = (int)(cell * 1.35f);
+        int dx = px + (cell - size) / 2;
+        int dy = py + (cell - size) / 2;
+        if (this.stationPath != "") {
+            RailPaint.Blit(c, this.stationPath, dx, dy, size, size);
+        } else {
+            RailPaint.FillRound(c, dx + 4, dy + 8, size - 8, size - 16, 4, 0xFFC9C0AE);
+        }
+        if (!showBadge) {
+            RailPaint.TextCentered(c, "始", px + cell / 2, py + cell / 2 - 8, cell, 14, 0xFF3A3A3A);
+            return;
+        }
+        int badge = 18;
+        int bx = px + cell - badge + 2;
+        int by = py + 2;
+        RailPaint.FillCircle(c, bx + badge / 2, by + badge / 2, badge / 2, RailCargo.ColorOf(type));
+        RailPaint.Circle(c, bx + badge / 2, by + badge / 2, badge / 2, 0xFF101820, 2);
+        RailPaint.TextCentered(c, RailCargo.NameOf(type), bx + badge / 2, by + 3, badge, 13, 0xFF101820);
+    }
+
+    // 底部提示条：分岔命令 / 操作说明。
+    public void DrawFooter(Canvas c, RailGame g, int w, int h) {
+        int y = h - 44;
+        RailPaint.Fill(c, 0, y, w, 44, 0xB0101824);
+        if (g.train != null && g.train.waiting) {
+            RailPaint.Text(c, "分岔调度：按 A / D 或点击下方按钮选路 · 鼠标移到按钮上可预览支线",
+                20, y + 12, 15, 0xFFFFE9A8);
+        } else {
+            RailPaint.Text(c, "机车自动前进 · 在分岔处选路 · Esc 打开设置",
+                20, y + 12, 15, 0xFF9FB0C6);
+        }
+        string ev = g.lastEvent;
+        if (ev != "") {
+            RailPaint.Text(c, ev, w - 360, y + 12, 15, 0xFFD8C88A);
+        }
+    }
+
+    // 菜单。
+    public void DrawMenu(Canvas c, RailGame g, int w, int h) {
+        this.DrawBackground(c, w, h);
+        RailPaint.FillRound(c, w / 2 - 340, 120, 680, 300, 14, 0xC0141A20);
+        RailPaint.Round(c, w / 2 - 340, 120, 680, 300, 14, 0xFF9A6B2E, 2);
+        RailPaint.TextCentered(c, "铁 轨 快 递", w / 2, 160, w, 54, 0xFFF2C14E);
+        RailPaint.TextCentered(c, "RAIL · 铁路调度", w / 2, 226, w, 20, 0xFF9FB4C4);
+        RailPaint.TextCentered(c,
+            "最高得分 " + Convert.ToString(g.shell.BestScore())
+            + "    累计送达 " + Convert.ToString(g.shell.TotalDelivered())
+            + "    通关次数 " + Convert.ToString(g.shell.Clears())
+            + "    出场 " + Convert.ToString(g.shell.Runs()),
+            w / 2, 266, w, 17, 0xFFC8D8E8);
+        RailPaint.TextCentered(c,
+            "把车上的货运到同色站台得分；送错站台扣分，走错支线会脱轨。每关限时。",
+            w / 2, 300, w, 15, 0xFF8FA6B4);
+        RailPaint.TextCentered(c, "鼠标移到按钮上预览支线，点击或按 A / D 选路",
+            w / 2, 326, w, 15, 0xFF8FA6B4);
+        RailPaint.TextCentered(c, "3 关递进 · 通关结算", w / 2, 352, w, 15, 0xFF8FA6B4);
+    }
+
+    // 结算面板。
+    public void DrawResult(Canvas c, RailGame g, int w, int h) {
+        RailPaint.Fill(c, 0, 0, w, h, 0xB0000000);
+        int px = w / 2 - 280;
+        int py = h / 2 - 190;
+        int pw = 560;
+        int ph = 380;
+        if (this.panelPath != "") {
+            RailPaint.Blit(c, this.panelPath, px, py, pw, ph);
+        } else {
+            RailPaint.FillRound(c, px, py, pw, ph, 10, 0xFF221A14);
+        }
+        RailPaint.Round(c, px, py, pw, ph, 10, g.cleared ? 0xFF9A6B2E : 0xFF8A3A3A, 2);
+        string title = "调度失败";
+        if (g.cleared) { title = "全线贯通"; }
+        RailPaint.TextCentered(c, title, px + pw / 2, py + 26, pw, 32, 0xFFF2C14E);
+        RailPaint.TextCentered(c, "第 " + Convert.ToString(g.levelIndex + 1) + " 关 · "
+            + RailGame.LevelName(g.levelIndex), px + pw / 2, py + 72, pw, 16, 0xFFE8E0CC);
+
+        int ty = py + 112;
+        RailPaint.Text(c, "本局得分", px + 60, ty, 17, 0xFFE8E0CC);
+        RailPaint.Text(c, Convert.ToString(g.score), px + 250, ty, 17, 0xFFFFF0C0);
+        ty = ty + 32;
+        RailPaint.Text(c, "送达货物", px + 60, ty, 17, 0xFFE8E0CC);
+        RailPaint.Text(c, Convert.ToString(g.delivered), px + 250, ty, 17, 0xFFBFE6D2);
+        ty = ty + 32;
+        RailPaint.Text(c, "用时", px + 60, ty, 17, 0xFFE8E0CC);
+        RailPaint.Text(c, Convert.ToString(g.elapsed) + " 秒", px + 250, ty, 17, 0xFFBFE6D2);
+        ty = ty + 32;
+        RailPaint.Text(c, "脱轨次数", px + 60, ty, 17, 0xFFE8E0CC);
+        RailPaint.Text(c, Convert.ToString(g.train != null ? g.train.crashCount : 0), px + 250, ty, 17, 0xFFE08A7A);
+
+        RailPaint.Fill(c, px + 40, py + 264, pw - 80, 1, 0x66C9A227);
+        RailPaint.TextCentered(c,
+            "累计：最高 " + Convert.ToString(g.shell.BestScore())
+            + "    送达 " + Convert.ToString(g.shell.TotalDelivered())
+            + "    通关 " + Convert.ToString(g.shell.Clears()),
+            px + pw / 2, py + 282, pw, 16, 0xFF9FB4C4);
+    }
+
+    // 按钮。
+    public void DrawButton(Canvas c, RailButton b, bool hover) {
+        int bg = 0xFF24463A;
+        int edge = 0xFF35604E;
+        int text = 0xFFEAF2F8;
+        if (b.kind == 1) { bg = 0xFF3E8FD6; edge = 0xFF7FB2E5; }
+        if (!b.enabled) { bg = 0xFF2A2F31; edge = 0xFF3A4145; text = 0xFF6E7A80; }
+        if (b.enabled && hover) {
+            if (b.kind == 1) { bg = 0xFF57A6E6; } else { bg = 0xFF2F6152; }
+        }
+        RailPaint.FillRound(c, b.x, b.y, b.w, b.h, 6, bg);
+        RailPaint.Round(c, b.x, b.y, b.w, b.h, 6, edge, 2);
+        RailPaint.TextCentered(c, b.label, b.x + b.w / 2, b.y + (b.h - 20) / 2, b.w, 19, text);
+    }
+}

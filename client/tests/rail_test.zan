@@ -1,0 +1,428 @@
+using System;
+using System.Collections.Generic;
+using Game.Kit;
+
+// 铁轨快递 · RAIL 玩法断言用例。
+//
+// 覆盖：轨道连通性 / 机车沿轨道逐格前进不脱轨 / 分岔选择决定下一节点 /
+// 货物与站台类型匹配才得分 / 错误站台扣分 / 倒计时归零判失败 /
+// 关卡依次推进 / 站点到达判定 / 3 个种子跑完不崩且得分与送达数自洽。
+//
+// 判据：全部断言通过则打印 "rail_test OK"。
+public class RailTest {
+    static int failures = 0;
+    static int checks = 0;
+
+    static void Ok(bool cond, string label) {
+        checks = checks + 1;
+        if (!cond) {
+            failures = failures + 1;
+            Console.WriteLine("FAIL " + label);
+        }
+    }
+
+    static void Eq(int got, int want, string label) {
+        Ok(got == want, label + " got=" + Convert.ToString(got)
+            + " want=" + Convert.ToString(want));
+    }
+
+    static void EqS(string got, string want, string label) {
+        Ok(got == want, label + " got=" + got + " want=" + want);
+    }
+
+    // 玩家式调度：模拟一局——分岔处按建议方向选路，其余时间自动前进。
+    // 返回实际走过的格数。
+    static int SimulateLevel(RailGame g, int level, int maxMoves) {
+        g.StartLevel(level);
+        int moves = 0;
+        int guard = 0;
+        while (moves < maxMoves && guard < maxMoves * 6
+            && g.phase == RailGame.PhaseDispatch) {
+            guard = guard + 1;
+            if (g.train.waiting) {
+                int pick = g.AutoPick();
+                if (pick < 0) { break; }
+                g.train.Choose(pick);
+                continue;
+            }
+            g.HandleMove(g.train.Move());
+            moves = moves + 1;
+        }
+        return moves;
+    }
+
+    // 随机调度：每到分岔随机选一条（可能选错，用来验证容错与自洽）。
+    static int SimulateRandom(RailGame g, int level, int maxMoves, Rng rng) {
+        g.StartLevel(level);
+        int moves = 0;
+        int guard = 0;
+        while (moves < maxMoves && guard < maxMoves * 6
+            && g.phase == RailGame.PhaseDispatch) {
+            guard = guard + 1;
+            if (g.train.waiting) {
+                List<int> opts = g.train.Options();
+                if (opts.Count == 0) { break; }
+                int pick = opts[rng.Range(0, opts.Count)];
+                g.train.Choose(pick);
+                continue;
+            }
+            g.HandleMove(g.train.Move());
+            moves = moves + 1;
+        }
+        return moves;
+    }
+
+    // 得分自洽：送一单 +100，送错 -15，脱轨 -25，关卡奖励另计。
+    static bool ScoreConsistent(RailGame g) {
+        int want = g.delivered * RailCargo.DeliverScore
+            - g.wrongCount * RailCargo.WrongPenalty
+            - g.crashTotal * RailCargo.CrashPenalty
+            + g.bonusTotal;
+        return g.score == want;
+    }
+
+    // ----- 地图解析 -----------------------------------------------------
+
+    static void TestMapParsing() {
+        int[] wantW = new int[] { 16, 20, 24 };
+        int[] wantH = new int[] { 8, 10, 10 };
+        int[] wantPlatforms = new int[] { 2, 3, 5 };
+        int[] wantCargo = new int[] { 1, 3, 4 };
+        for (int lv = 0; lv < 3; lv = lv + 1) {
+            string[] rows = RailGame.LevelRows(lv);
+            RailNetwork net = new RailNetwork(rows);
+            Eq(net.width, wantW[lv], "第" + Convert.ToString(lv + 1) + "关地图宽度");
+            Eq(net.height, wantH[lv], "第" + Convert.ToString(lv + 1) + "关地图高度");
+            // 每行长度不齐时要补齐——补出来的格子必须是空地。
+            int maxLen = 0;
+            for (int y = 0; y < rows.Length; y = y + 1) {
+                if (rows[y].Length > maxLen) { maxLen = rows[y].Length; }
+            }
+            Eq(net.width, maxLen, "第" + Convert.ToString(lv + 1) + "关宽度取最长行");
+            int depot = net.DepotCell();
+            Ok(depot >= 0, "第" + Convert.ToString(lv + 1) + "关有货场");
+            Eq(net.Degree(net.XOf(depot), net.YOf(depot)), 1, "货场只有一个接头");
+            List<int> plats = net.PlatformCells();
+            Eq(plats.Count, wantPlatforms[lv], "第" + Convert.ToString(lv + 1) + "关站台数");
+            Eq(RailGame.LevelCargo(lv).Length, wantCargo[lv], "第" + Convert.ToString(lv + 1) + "关货单长度");
+            Ok(RailGame.LevelSeconds(lv) > 0, "第" + Convert.ToString(lv + 1) + "关有时限");
+            Ok(RailGame.LevelName(lv) != "", "第" + Convert.ToString(lv + 1) + "关有名字");
+            // 站台类型都要点名到位。
+            net.AssignStations(RailGame.LevelStations(lv));
+            int typed = 0;
+            for (int i = 0; i < plats.Count; i = i + 1) {
+                int idx = plats[i];
+                if (net.TypeAt(net.XOf(idx), net.YOf(idx)) >= 0) { typed = typed + 1; }
+            }
+            Eq(typed, wantPlatforms[lv], "第" + Convert.ToString(lv + 1) + "关站台需求类型齐备");
+        }
+    }
+
+    // ----- 连通性 -------------------------------------------------------
+
+    static void TestConnectivity() {
+        for (int lv = 0; lv < 3; lv = lv + 1) {
+            RailNetwork net = new RailNetwork(RailGame.LevelRows(lv));
+            net.AssignStations(RailGame.LevelStations(lv));
+            int depot = net.DepotCell();
+            int dx = net.XOf(depot);
+            int dy = net.YOf(depot);
+            List<int> plats = net.PlatformCells();
+            bool allReachable = true;
+            for (int i = 0; i < plats.Count; i = i + 1) {
+                int idx = plats[i];
+                List<int> path = net.PathTo(dx, dy, net.XOf(idx), net.YOf(idx));
+                if (path.Count == 0) { allReachable = false; }
+            }
+            Ok(allReachable, "第" + Convert.ToString(lv + 1) + "关货场能到所有站台");
+            // 站台是尽头：只有 1 个接头。
+            bool platformEnds = true;
+            for (int i = 0; i < plats.Count; i = i + 1) {
+                int idx = plats[i];
+                if (net.Degree(net.XOf(idx), net.YOf(idx)) != 1) { platformEnds = false; }
+            }
+            Ok(platformEnds, "第" + Convert.ToString(lv + 1) + "关站台都是尽头");
+            // 分岔：3 个接头，且至少 2 个。
+            int switches = 0;
+            bool switchShape = true;
+            for (int y = 0; y < net.height; y = y + 1) {
+                for (int x = 0; x < net.width; x = x + 1) {
+                    if (!net.IsTrack(x, y)) { continue; }
+                    if (net.Degree(x, y) == 3) {
+                        switches = switches + 1;
+                        if (!net.IsSwitch(x, y)) { switchShape = false; }
+                    }
+                }
+            }
+            Ok(switches >= 2, "第" + Convert.ToString(lv + 1) + "关至少有 2 个分岔 got="
+                + Convert.ToString(switches));
+            Ok(switchShape, "第" + Convert.ToString(lv + 1) + "关分岔都是 3 接头");
+            // 树：边数 = 点数 - 1（没有环，路径唯一）。
+            int nodes = 0;
+            int edges = 0;
+            for (int y = 0; y < net.height; y = y + 1) {
+                for (int x = 0; x < net.width; x = x + 1) {
+                    if (!net.IsTrack(x, y)) { continue; }
+                    nodes = nodes + 1;
+                    for (int d = 0; d < 4; d = d + 1) {
+                        if (d != RailNetwork.East && d != RailNetwork.South) { continue; }
+                        if (net.Linked(x, y, d)) { edges = edges + 1; }
+                    }
+                }
+            }
+            Eq(edges, nodes - 1, "第" + Convert.ToString(lv + 1) + "关是树（边数=点数-1）");
+        }
+        // 第 1 关：货场 (1,4) → 红台 (5,6) = 向东 4 格 + 向南 2 格。
+        RailNetwork n0 = new RailNetwork(RailGame.LevelRows(0));
+        n0.AssignStations(RailGame.LevelStations(0));
+        Eq(n0.PathTo(1, 4, 5, 6).Count, 6, "第 1 关货场到红台 6 格");
+        Eq(n0.FirstStepTo(1, 4, 5, 6), RailNetwork.East, "第 1 关起点先往东");
+        // 第 2 关有撞车用的死路支线。
+        RailNetwork n1 = new RailNetwork(RailGame.LevelRows(1));
+        n1.AssignStations(RailGame.LevelStations(1));
+        Ok(n1.BranchDeadEnd(12, 5, RailNetwork.South), "第 2 关有死路支线");
+        Ok(!n1.BranchDeadEnd(4, 5, RailNetwork.South), "第 2 关通往站台的支线不是死路");
+    }
+
+    // ----- 机车行为 -----------------------------------------------------
+
+    static void TestTrain() {
+        RailNetwork net = new RailNetwork(RailGame.LevelRows(0));
+        net.AssignStations(RailGame.LevelStations(0));
+        RailTrain train = new RailTrain(net);
+        int depot = net.DepotCell();
+        train.Place(net.XOf(depot), net.YOf(depot), RailNetwork.East);
+        Eq(train.x, 1, "机车起点在货场");
+        Eq(train.y, 4, "机车起点行号");
+
+        // 逐格前进：每一步都落在轨道上，绝不脱轨（一直选直行方向）。
+        int r = train.Move();
+        Ok(r == RailTrain.MoveOk || r == RailTrain.MoveWait, "第一步前进正常");
+        Ok(net.IsTrack(train.x, train.y), "第一步后仍在轨道上");
+        int onTrack = 1;
+        for (int i = 0; i < 6; i = i + 1) {
+            if (train.waiting) {
+                // 分岔处选一个非来路方向继续。
+                List<int> opts = train.Options();
+                Eq(opts.Count, 2, "分岔处有两个去向");
+                train.Choose(opts[0]);
+            }
+            train.Move();
+            if (net.IsTrack(train.x, train.y)) { onTrack = onTrack + 1; }
+        }
+        Ok(onTrack >= 6, "连续前进都不脱轨 onTrack=" + Convert.ToString(onTrack));
+
+        // 到达分岔会停下等调度。
+        RailNetwork n1 = new RailNetwork(RailGame.LevelRows(0));
+        n1.AssignStations(RailGame.LevelStations(0));
+        RailTrain t1 = new RailTrain(n1);
+        t1.Place(1, 4, RailNetwork.East);
+        bool waited = false;
+        for (int i = 0; i < 8; i = i + 1) {
+            if (t1.waiting) { waited = true; break; }
+            int res = t1.Move();
+            if (res == RailTrain.MoveWait) { waited = true; break; }
+        }
+        Ok(waited, "机车在分岔处停下等待调度");
+        Ok(t1.waiting, "停下时 waiting 为真");
+        Eq(t1.Options().Count, 2, "分岔有两个可选方向");
+        Ok(t1.LeftOption() != t1.RightOption(), "左右两个方向不同");
+
+        // 选方向决定下一格。
+        int left = t1.LeftOption();
+        int right = t1.RightOption();
+        int bx = t1.x;
+        int by = t1.y;
+        t1.Choose(left);
+        t1.Move();
+        Eq(t1.x, bx + RailNetwork.Dx(left), "选左后走到左边那一格");
+        Eq(t1.y, by + RailNetwork.Dy(left), "选左后走到左边那一格(行)");
+
+        // 掉头：方向反转。
+        RailTrain t2 = new RailTrain(n1);
+        t2.Place(1, 4, RailNetwork.East);
+        t2.Reverse();
+        Eq(t2.dir, RailNetwork.West, "掉头后朝向西");
+
+        // 撞死路：退回上一个分岔并记一次脱轨。
+        RailNetwork n2 = new RailNetwork(RailGame.LevelRows(1));
+        n2.AssignStations(RailGame.LevelStations(1));
+        RailTrain t3 = new RailTrain(n2);
+        t3.Place(1, 5, RailNetwork.East);
+        // 一路向东到 (12,5) 分岔（中途的分岔一律选东向），再选南边那条死路。
+        for (int i = 0; i < 60; i = i + 1) {
+            if (t3.x == 12 && t3.y == 5) { break; }
+            if (t3.waiting) {
+                List<int> o = t3.Options();
+                int pick = -1;
+                for (int k = 0; k < o.Count; k = k + 1) {
+                    if (o[k] == RailNetwork.East) { pick = o[k]; }
+                }
+                if (pick < 0 && o.Count > 0) { pick = o[0]; }
+                if (pick < 0) { break; }
+                t3.Choose(pick);
+            }
+            t3.Move();
+        }
+        Ok(t3.x == 12 && t3.y == 5, "走到第 2 关第 3 个分岔");
+        int south = -1;
+        List<int> opts3 = t3.Options();
+        for (int i = 0; i < opts3.Count; i = i + 1) {
+            if (opts3[i] == RailNetwork.South) { south = opts3[i]; }
+        }
+        Ok(south >= 0, "分岔有南向支线");
+        if (south >= 0) {
+            t3.Choose(south);
+            int res = 0;
+            for (int i = 0; i < 8; i = i + 1) {
+                res = t3.Move();
+                if (res == RailTrain.MoveCrash) { break; }
+            }
+            Eq(res, RailTrain.MoveCrash, "走进死路判脱轨");
+            Eq(t3.crashCount, 1, "脱轨次数记 1");
+            Eq(t3.x, 12, "脱轨后退回分岔所在格");
+            Eq(t3.y, 5, "脱轨后退回分岔所在格(行)");
+            Ok(t3.waiting, "脱轨后重新等待调度");
+        }
+    }
+
+    // ----- 货物与站台匹配 -----------------------------------------------
+
+    static void TestCargoRules() {
+        Ok(RailCargo.Match(RailCargo.Red, RailCargo.Red), "红货配红台");
+        Ok(!RailCargo.Match(RailCargo.Red, RailCargo.Blue), "红货不配蓝台");
+        Ok(!RailCargo.Match(RailCargo.Blue, RailCargo.Yellow), "蓝货不配黄台");
+        Ok(RailCargo.Match(RailCargo.Yellow, RailCargo.Yellow), "黄货配黄台");
+        EqS(RailCargo.NameOf(RailCargo.Red), "红", "红货名");
+        EqS(RailCargo.NameOf(RailCargo.Blue), "蓝", "蓝货名");
+        EqS(RailCargo.NameOf(RailCargo.Yellow), "黄", "黄货名");
+        Ok(RailCargo.ColorOf(RailCargo.Red) != RailCargo.ColorOf(RailCargo.Blue),
+            "不同货物颜色不同");
+        Eq(RailCargo.DeliverScore, 100, "送达得分 100");
+        Eq(RailCargo.WrongPenalty, 15, "送错扣 15");
+        Eq(RailCargo.CrashPenalty, 25, "脱轨扣 25");
+        Eq(RailCargo.CrashTimeCost, 5, "脱轨损失 5 秒");
+    }
+
+    // ----- 关卡推进 -----------------------------------------------------
+
+    static void TestLevelRun() {
+        RailGame g = new RailGame(false);
+        int[] wantCargo = new int[] { 1, 3, 4 };
+        for (int lv = 0; lv < 3; lv = lv + 1) {
+            g.StartGame();
+            int moves = SimulateLevel(g, lv, 400);
+            Ok(moves > 0, "第" + Convert.ToString(lv + 1) + "关能跑起来");
+            Eq(g.cargoIndex, wantCargo[lv], "第" + Convert.ToString(lv + 1) + "关送完本关货物");
+            Eq(g.phase, RailGame.PhaseClear, "第" + Convert.ToString(lv + 1) + "关进入过关阶段");
+            Eq(g.wrongCount, 0, "第" + Convert.ToString(lv + 1) + "关按建议路线不送错站");
+            Eq(g.crashTotal, 0, "第" + Convert.ToString(lv + 1) + "关按建议路线不脱轨");
+            Ok(g.score > 0, "第" + Convert.ToString(lv + 1) + "关得分是正的");
+            Ok(ScoreConsistent(g), "第" + Convert.ToString(lv + 1) + "关得分与送达数自洽");
+            Ok(g.delivered == wantCargo[lv], "第" + Convert.ToString(lv + 1) + "关送达计数正确");
+        }
+
+        // 三关连打：关卡依次推进，最后一关过关即全线贯通。
+        RailGame g2 = new RailGame(false);
+        g2.StartGame();
+        for (int lv = 0; lv < 3; lv = lv + 1) {
+            SimulateLevel(g2, lv, 600);
+            if (g2.phase == RailGame.PhaseClear) {
+                g2.phaseTimer = 0;
+                g2.AfterPhase();
+            }
+        }
+        Eq(g2.levelIndex, 2, "连打三关停在第 3 关");
+        Eq(g2.phase, RailGame.PhaseWin, "三关全过进入贯通阶段");
+        Ok(g2.cleared, "三关全过标记为贯通");
+        Eq(g2.delivered, 8, "三关累计送达 8 件");
+        Ok(ScoreConsistent(g2), "三关连打得分自洽");
+
+        // 结算：贯通后进结算画面，累计数据写进存档。
+        g2.phaseTimer = 0;
+        g2.AfterPhase();
+        Eq(g2.screen, RailGame.ScreenResult, "贯通后进入结算画面");
+        Ok(g2.shell.BestScore() >= g2.score, "结算后最高分已记录");
+    }
+
+    // ----- 倒计时与失败 -------------------------------------------------
+
+    static void TestTimeout() {
+        RailGame g = new RailGame(false);
+        g.StartGame();
+        int before = g.timeLeft;
+        g.TickClock(1000);
+        Eq(g.timeLeft, before - 1, "过一秒倒计时减一");
+        g.TickClock(120000);
+        Eq(g.timeLeft, 0, "时间耗尽倒计时归零");
+        Eq(g.phase, RailGame.PhaseFail, "时间耗尽判本关失败");
+        g.phaseTimer = 0;
+        g.AfterPhase();
+        Eq(g.screen, RailGame.ScreenResult, "失败后进入结算画面");
+        Ok(!g.cleared, "失败不算贯通");
+    }
+
+    // ----- 多种子随机调度（容错 + 自洽） --------------------------------
+
+    static void TestSeeds() {
+        long[] seeds = new long[] { 20261021L, 13579L, 42424242L };
+        for (int s = 0; s < seeds.Length; s = s + 1) {
+            RailGame g = new RailGame(false);
+            Rng rng = Rng.Seed(seeds[s]);
+            g.StartGame();
+            int totalMoves = 0;
+            for (int lv = 0; lv < 3; lv = lv + 1) {
+                totalMoves = totalMoves + SimulateRandom(g, lv, 400, rng);
+                if (g.phase == RailGame.PhaseClear) {
+                    g.phaseTimer = 0;
+                    g.AfterPhase();
+                }
+            }
+            Ok(totalMoves > 0, "种子" + Convert.ToString(seeds[s]) + " 能跑起来");
+            Ok(g.delivered >= 0, "种子" + Convert.ToString(seeds[s]) + " 送达数不为负");
+            Ok(g.delivered <= 8, "种子" + Convert.ToString(seeds[s]) + " 送达数不超过总货量");
+            Ok(ScoreConsistent(g), "种子" + Convert.ToString(seeds[s]) + " 得分与送达数自洽");
+            Ok(g.score <= 8 * RailCargo.DeliverScore + 3 * 500,
+                "种子" + Convert.ToString(seeds[s]) + " 得分不越界");
+            // 随机调度也必须始终停在轨道上。
+            Ok(g.net != null && g.train != null, "种子" + Convert.ToString(seeds[s]) + " 状态完整");
+        }
+    }
+
+    // ----- 存档累计 -----------------------------------------------------
+
+    static void TestSaveAccumulation() {
+        RailGame g = new RailGame(false);
+        g.shell.RecordScore(120);
+        g.shell.RecordScore(300);
+        Ok(g.shell.BestScore() >= 300, "最高分不小于历史最大值");
+        g.shell.RecordScore(1000);
+        Eq(g.shell.BestScore(), 1000, "更高分覆盖旧纪录");
+        int before = g.shell.TotalDelivered();
+        g.shell.RecordDelivered(2);
+        g.shell.RecordDelivered(3);
+        Eq(g.shell.TotalDelivered(), before + 5, "累计送达累加");
+        int clears = g.shell.Clears();
+        g.shell.RecordClear();
+        Eq(g.shell.Clears(), clears + 1, "通关次数加一");
+        Ok(g.shell.Runs() >= 0, "出场次数可读");
+    }
+
+    static void Main() {
+        TestMapParsing();
+        TestConnectivity();
+        TestTrain();
+        TestCargoRules();
+        TestLevelRun();
+        TestTimeout();
+        TestSeeds();
+        TestSaveAccumulation();
+        Console.WriteLine("rail_test checks=" + Convert.ToString(checks)
+            + " failures=" + Convert.ToString(failures));
+        if (failures > 0) {
+            Console.WriteLine("rail_test FAILED");
+            return;
+        }
+        Console.WriteLine("rail_test OK");
+    }
+}

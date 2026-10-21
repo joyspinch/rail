@@ -5,8 +5,8 @@ using System.Json;
 using Game.Foundation;
 using Game.Foundation.Gui;
 
-// 铁脉物流 · RAIL 的外壳：存档（最远月份 / 累计金币 / 最长编组 / 出场次数）
-// + 设置（难度 / 维护费 / 长编组）+ 设置浮层。
+// 铁轨快递 · RAIL 的外壳：存档（最高得分 / 累计送达 / 通关次数 / 出场次数）
+// + 设置（音效 / 自动调度 / 调度建议 / 严格时限）+ 设置浮层。
 //
 // 存档基座（原子写 + 备份回退 + 版本号）与设置逻辑层（档位计算 + 校验 +
 // 落盘）都在公共包 Game.Foundation 里；这里只留"这个游戏存什么、设置有哪
@@ -16,23 +16,20 @@ public class GameShell {
     GameSettings settings;
     SettingsModel model;
     SettingsOverlay overlay;
-    int bestMonth;   // 最远到达的月份（year * 12 + month）
-    int coins;       // 累计金币（收入进账、支出扣减后的资金总额）
-    int bestWagons;  // 最长编组（车厢数）
-    int runs;        // 出场次数
+    int bestScore;        // 历史最高得分
+    int totalDelivered;   // 累计送达货物数
+    int clears;           // 全线贯通（3 关全过）次数
+    int runs;             // 出场次数
 
     public GameShell() {
         string dir = GameShell.SaveDir();
         Directory.CreateDirectory(dir);
         this.store = new GameSaveStore(dir, "rail", 1);
         this.settings = new GameSettings().At(dir + "/settings.json");
-        // 难度：收益变低、事故变重。
-        this.settings.AddIntChoice("difficulty", "难度", 2,
-            new List<int> { 1, 2, 3 });
-        // 维护费：每月固定支出。
-        this.settings.AddBool("maintenance", "维护费", false);
-        // 长编组：货舱上限更大。
-        this.settings.AddBool("longHaul", "长编组", false);
+        this.settings.AddBool("sfx", "音效", true);
+        this.settings.AddBool("autoDrive", "自动调度", false);
+        this.settings.AddBool("hint", "调度建议", true);
+        this.settings.AddBool("strict", "严格时限", false);
         this.settings.Load();
         this.model = new SettingsModel(this.settings);
         this.overlay = new SettingsOverlay(this.model);
@@ -51,82 +48,69 @@ public class GameShell {
     }
 
     public SettingsOverlay Overlay() { return this.overlay; }
-    public int BestMonth() { return this.bestMonth; }
-    public int Coins() { return this.coins; }
-    public int BestWagons() { return this.bestWagons; }
+    public int BestScore() { return this.bestScore; }
+    public int TotalDelivered() { return this.totalDelivered; }
+    public int Clears() { return this.clears; }
     public int Runs() { return this.runs; }
 
-    // 难度档（1/2/3）——游戏逻辑读它调经济与事故。
-    public int Difficulty() {
-        if (this.settings == null) { return 2; }
-        return this.settings.GetInt("difficulty");
+    // 设置项（面板改完立刻生效——每帧读当前值）。
+    public bool Sfx() {
+        if (this.settings == null) { return true; }
+        return this.settings.GetBool("sfx");
     }
 
-    // 每单位货物换多少金币：难度越高越不赚钱。
-    public int CoinDivisor() {
-        return 6 + 2 * this.Difficulty();
+    public bool AutoDrive() {
+        if (this.settings == null) { return false; }
+        return this.settings.GetBool("autoDrive");
     }
 
-    // 事故损失（金币）：难度越高损失越大。
-    public int AccidentLoss() {
-        return 60 * this.Difficulty();
+    public bool Hint() {
+        if (this.settings == null) { return true; }
+        return this.settings.GetBool("hint");
     }
 
-    public bool Maintenance() {
-        return this.settings != null && this.settings.GetBool("maintenance");
-    }
-
-    public bool LongHaul() {
-        return this.settings != null && this.settings.GetBool("longHaul");
-    }
-
-    // 货舱上限：长编组开着一律多拉 200 吨。
-    public int CargoMax() {
-        return this.LongHaul() ? 600 : 400;
-    }
-
-    // 起始编组：长编组开启时多挂一节车厢。
-    public int InitialWagons() {
-        return this.LongHaul() ? 5 : 4;
+    public bool Strict() {
+        if (this.settings == null) { return false; }
+        return this.settings.GetBool("strict");
     }
 
     // 读档：没有存档就用默认值，不报错。
     public void Load() {
         JsonValue data = this.store.Load(0);
         if (data == null) {
-            this.bestMonth = 0;
-            this.coins = 0;
-            this.bestWagons = 0;
+            this.bestScore = 0;
+            this.totalDelivered = 0;
+            this.clears = 0;
             this.runs = 0;
             return;
         }
-        this.bestMonth = data.Int("bestMonth", 0);
-        this.coins = data.Int("coins", 0);
-        this.bestWagons = data.Int("bestWagons", 0);
+        this.bestScore = data.Int("bestScore", 0);
+        this.totalDelivered = data.Int("totalDelivered", 0);
+        this.clears = data.Int("clears", 0);
         this.runs = data.Int("runs", 0);
     }
 
-    // 最远月份只增不减。
-    public void RecordMonth(int monthIndex) {
-        if (monthIndex > this.bestMonth) { this.bestMonth = monthIndex; }
+    // 最高得分只增不减。
+    public void RecordScore(int score) {
+        if (score > this.bestScore) { this.bestScore = score; }
     }
 
-    // 最长编组只增不减。
-    public void RecordWagons(int wagons) {
-        if (wagons > this.bestWagons) { this.bestWagons = wagons; }
+    // 累计送达只增不减。
+    public void RecordDelivered(int count) {
+        if (count > 0) { this.totalDelivered = this.totalDelivered + count; }
     }
 
-    // 累计金币：资金总额（收入进账、事故与维护费扣减）。
-    public void RecordCoins(int amount) {
-        this.coins = amount;
+    // 通关次数 +1。
+    public void RecordClear() {
+        this.clears = this.clears + 1;
     }
 
-    // 存档：最远月份与最长编组只增不减，累计金币取最新值，出场次数 +1。
+    // 存档：最高得分与累计量在内存里已更新，这里落盘；出场次数 +1。
     public void Save() {
         JsonValue data = JsonValue.NewObject();
-        data.PutInt("bestMonth", this.bestMonth);
-        data.PutInt("coins", this.coins);
-        data.PutInt("bestWagons", this.bestWagons);
+        data.PutInt("bestScore", this.bestScore);
+        data.PutInt("totalDelivered", this.totalDelivered);
+        data.PutInt("clears", this.clears);
         data.PutInt("runs", this.runs + 1);
         this.runs = this.runs + 1;
         this.store.Save(0, data);

@@ -1,55 +1,78 @@
-# rail · 铁脉物流 · 素材清单
+# 铁轨快递 · RAIL —— 素材清单
 
-参考 OpenTTD 的铁路经营玩法（基建 / 运输 / 经济循环）；**baseset 走自制重绘路线**——只借鉴重绘思路与规格，不取 TTD 原版衍生。
+俯视铁路调度游戏。素材全部自制：位图由 AI 生成（gpt-image-2.5）后经
+Python/PIL 抠 alpha、裁边、按显示尺寸 2 倍入库；音效由 Python/numpy 合成。
 
-**总量**：图片 44 张 / 音频 12 个
-**P0 图片**：44 张（轨道 8 + 车辆 12 + 建筑 12 + 地形 8 + UI 4）
-**参考源**：OpenTTD `media/baseset/openttd/` —— GPL-2.0（自制重绘），33 png + 22 nfo 可作底子；同目录 `orig_*` 排除。
+**入库总量**：位图 8 张（750 KB）+ 音效 8 个（184 KB）≈ **918 KB**
+（口径 0.3–1.5 MB，达标）。原始生成图不入库，落在 `build/raw/`。
 
-## 一、需要自制的图片
+## 一、位图（client/assets/）
 
-| 类别 | 数量 | 规格 | 用途 | 优先级 |
+| 文件 | 尺寸 | 显示尺寸 | 用途 | 来源 |
 |---|---|---|---|---|
-| 轨道 | 8 | 32×32（等轴测预切菱形） | 直/弯/斜/道岔/桥/隧道口/信号/站台 | P0 |
-| 车辆 | 6 型 × 2 向 = 12 | 64×32 | 蒸汽/内燃/电力/货车/罐车/守车 | P0 |
-| 建筑 | 12 | 64×64 | 车站/仓库/工厂/磨坊/铁矿/油井/电站/桥/信号/市场/煤场/车场 | P0 |
-| 地形 | 8 | 32×32（菱形） | 草地/林/矿/岩/水/沙/山/雪 | P0 |
-| UI | 4 | — | 资源条 / 迷你地图 / 日期表 / 财务面板 | P0 |
+| `bg_land.png` | 1024×640 | 1280×848 满铺 | 俯视乡村背景大图（田地/河/林/农舍） | AI 生成 → 缩放 + 128 色调色板 |
+| `track_h.png` | 128×128 | 48–64 px/格 | 东西向直轨 | AI 生成 → 抠黑底 + 裁边 |
+| `track_v.png` | 128×128 | 48–64 px/格 | 南北向直轨 | `track_h.png` 旋转 90° 派生 |
+| `switch_n.png` | 128×128 | 48–64 px/格 | 分岔（东西直通 + 北向岔道） | `track_h` + `track_v` 上半拼合 |
+| `switch_s.png` | 128×128 | 48–64 px/格 | 分岔（东西直通 + 南向岔道） | `track_h` + `track_v` 下半拼合 |
+| `train.png` | 128×128 | 1.35 格 | 俯视蒸汽机车（车头有排障器） | AI 生成 → 抠黑底 + 裁边 |
+| `cargo.png` | 64×64 | 0.36 格 | 车载木货箱 | AI 生成 → 抠黑底 + 裁边 |
+| `station.png` | 160×160 | 1.35 格 | 乡村站台（雨棚 + 站台板） | AI 生成 → 抠黑底 + 裁边 |
+| `panel.png` | 1024×64 | 顶栏 1280×76 / 结算 560×380 | 黄铜铆钉面板（HUD 顶栏 + 结算框） | AI 生成 → 抠黑底 + 裁条 |
 
-## 二、需要自制的音频
+**为什么直轨只有一张原图**：竖轨与两种分岔由横轨图旋转/拼合派生，
+轨道接缝才对得上——AI 各画一张必然对不齐。
 
-| 类别 | 数量 | 规格 | 用途 | 优先级 |
-|---|---|---|---|---|
-| 音 SFX | 6 | — | 汽笛1 / 装卸2 / 刹车1 / 汽轮1 / 界面1 | P1 |
-| 音 loop | 5 | — | 车轮3（按轨型）/ 厂房 / 风声 | P1 |
-| 音 BGM | 1 | — | 经营 | P2 |
+**生成提示词**（`gpt-image-2.5`，`--size 1024x1024` 或 `1536x1024`）：
 
-## 三、规格要点（本项目特有）
+- bg_land：`Top-down aerial view of a stylized countryside railway region,
+  patchwork green farm fields, small forest clusters, a winding river, dirt
+  roads, painterly game art, even soft lighting, no text, no people, no trains`
+- track_h：`Top-down orthographic view of one straight railway track segment
+  running horizontally, two steel rails on wooden sleepers on grey ballast bed,
+  perfectly centered, isolated on pure black background, crisp game asset`
+- train：`Top-down orthographic view of a small vintage steam locomotive seen
+  from directly above, symmetrical boiler and cab, chimney in the middle,
+  isolated on pure black background, crisp game asset`
+- cargo：`Top-down orthographic view of a wooden shipping crate with iron metal
+  bands, perfectly centered, isolated on pure black background, crisp game asset`
+- station：`Top-down orthographic view of a small rural railway station
+  platform with a wooden shelter, small roof and awning, perfectly centered,
+  isolated on pure black background, crisp game asset`
+- panel：`A single horizontal dark brass and steel riveted UI panel bar, beveled
+  edges, empty smooth center, warm metal, isolated on pure black background`
 
-- 等轴测一律用**预切菱形（2:1）**，不是正方形：轨道与地形都是 32×32 画布上的菱形块，贴错正方形会导致拼接错位。
-- 车辆 64×32 是横向车体比例，朝向只做 2 向（左右镜像）。
-- 建筑 64×64 对应 2×2 逻辑格；光源右上、阴影左下，高起=亮调、平地=中调、下陷=暗调。
-- 轨道 tile 是拼接件：直 / 弯 / 斜要在菱形网格上无缝咬合，斜段按 45° 折线对齐。
-- 地形与轨道共用一套明度阶（单一色相 3–4 阶 + 1 个装饰点缀色），草地与雪要压得住轨道色。
-- 音频格式统一 OGG Vorbis：SFX ≤1.5s 单声道、loop 2–4s 首尾波形对齐（车轮按轨型分 3 条）、BGM 60–120s 立体声（总账 §1.2）。
-- **估算**：像素画 44 张 ≈ 22–44 + SFX 6 ≈ 1.8 + loop 5 ≈ 2.5 + BGM 1 ≈ 3 ≈ **29.3–51.3 人日**（口径：0.5–1 人日/张、0.3/SFX、0.5/loop、3/BGM）。
+## 二、后处理（build/postprocess.py 的口径）
 
-## 四、可直接取用（仅本项目相关的）
+1. AI 图没有 alpha（纯黑底）→ 从四边洪泛把连通的近黑像素抠成透明
+   （阈值 14）；背景图整幅保留，不抠。
+2. 按 alpha 包围盒裁边；再裁成**以内容为中心的正方形**并缩放到显示尺寸 2 倍。
+3. 背景缩到 1024×640 后转 128 色调色板（PNG 索引色），体积从 1.5 MB 压到 470 KB。
+4. 音效：22050 Hz / 16 bit / 单声道 WAV，`assets/sfx/<事件名>.wav`。
 
-| 来源 | 素材 | 授权 | 限制 |
-|---|---|---|---|
-| OpenTTD `media/baseset/openttd/` | 33 png + 22 nfo | GPL-2.0（自制重绘） | 可用的 baseset 底子；**同目录 `orig_*.obg` / `orig_extra` 是 TTD 原版衍生，不可再用**；字体 GPL-2.0 |
+## 三、音效（client/assets/sfx/）
 
-## 五、红线（仅本项目相关的）
-
-| 来源 | 问题 | 处置 |
+| 文件 | 时长 | 触发时机 |
 |---|---|---|
-| OpenTTD `orig_*` | TTD 原版衍生 | 排除 |
-| Mindustry 素材 | GPLv3 传染 + 第三方素材许可未声明 | 只当**规范**参考（尺寸/描边/色槽），不取像素 |
+| `whistle.wav` | 0.55 s | 汽笛：关卡开始、机车抵达分岔 |
+| `select.wav` | 0.09 s | 咔哒：玩家在分岔处确认路线（A/D 或点按钮） |
+| `deliver.wav` | 0.30 s | 上行三音铃：货物送到**同色**站台，得分 +100 |
+| `error.wav` | 0.26 s | 下行闷响：送到**异色**站台，扣 15 分 |
+| `crash.wav` | 0.45 s | 噪声爆 + 闷锤：走进死路支线脱轨，扣 25 分、损失 5 秒 |
+| `levelup.wav` | 0.52 s | 号角：本关货物送完，通关结算加分 |
+| `win.wav` | 0.84 s | 长号角：3 关全过，全线贯通 |
+| `fail.wav` | 0.51 s | 下行小调：倒计时归零，本关失败 |
 
-## 六、制作批次
+音效走公共包 `Game.Foundation.SfxBank`（`SfxBank.LoadAll("assets/sfx", …)`），
+磁盘优先 + 内嵌兜底；没有声卡时整库静默失效，游戏照常跑。
 
-- 批次 1（P0）：8 张地形菱形、8 张轨道菱形、12 栋建筑、12 辆 2 向车辆 —— 与总账执行顺序建议一致，rail 与 platformer 先行。
-- 批次 2（P0）：4 件 UI（资源条 / 迷你地图 / 日期表 / 财务面板）。
-- 批次 3（音频）：6 个 SFX → 5 个 loop（车轮 3 + 厂房 + 风声）→ 1 首经营 BGM。
-- 可复用：本作的菱形地形明度阶与建筑色阶可直接复用到 `crawler`、`voxel`、`coreforge`；UI 资源条与 `voxel` 的物品栏风格统一。
+## 四、程序化叠加（不占位图预算）
+
+- **货物类型色**：货箱位图外套一圈颜色框（红/蓝/黄），站台右上角同色徽标 + 汉字。
+- **机车朝向**：俯视机车贴图本身左右对称，朝向用车头前的一颗光点表示。
+- **HUD / 按钮 / 进度**：几何绘制（面板底、边框、文字），属界面部件，允许几何。
+
+## 五、许可与来源
+
+全部自制：位图来自本项目调用的图像生成 API，音效为本项目脚本合成。
+未取用任何第三方游戏素材（含 OpenTTD/TTD 衍生件）。

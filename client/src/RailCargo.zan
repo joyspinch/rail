@@ -1,0 +1,47 @@
+using System;
+
+// 货物与站台的类型规则。
+//
+// 货物有类型（红/蓝/黄），站台有需求类型：把车上的货运到**同类型**的
+// 站台才算送达得分；送到类型不对的站台要扣分。所以玩家在分岔处选路
+// 时必须盯紧 HUD 上"车上是几号货"，不能只看哪条路近。
+public class RailCargo {
+    public const int Red = 0;
+    public const int Blue = 1;
+    public const int Yellow = 2;
+
+    public const int DeliverScore = 100;
+    public const int WrongPenalty = 15;
+    public const int CrashPenalty = 25;
+    public const int CrashTimeCost = 5;
+
+    public static string NameOf(int type) {
+        if (type == Red) { return "红"; }
+        if (type == Blue) { return "蓝"; }
+        if (type == Yellow) { return "黄"; }
+        return "未知";
+    }
+
+    public static string FullNameOf(int type) {
+        if (type == Red) { return "红货"; }
+        if (type == Blue) { return "蓝货"; }
+        if (type == Yellow) { return "黄货"; }
+        return "杂货";
+    }
+
+    // 货物/站台的识别色（0xAARRGGBB）。
+    public static int ColorOf(int type) {
+        if (type == Red) { return 0xFFE04A42; }
+        if (type == Blue) { return 0xFF3E8FD6; }
+        if (type == Yellow) { return 0xFFEFC04A; }
+        return 0xFFB0B8C0;
+    }
+
+    // 类型是否匹配：只有同类型才算送达。
+    public static bool Match(int cargoType, int stationType) {
+        return cargoType == stationType;
+    }
+
+    // 送达得分（不同货物同分，保持规则简单可预期）。
+    public static int ScoreOf(int type) { return RailCargo.DeliverScore; }
+}

@@ -1,0 +1,149 @@
+using System;
+using System.Collections.Generic;
+
+// 机车：自动前进，每 tick 走一格；到分岔处停下等调度（玩家选路）。
+//
+// 状态：
+//   dir     当前朝向（进入当前格时的行进方向）
+//   pending 已选定的下一步方向（-1 = 还没选）
+//   waiting 是否停在分岔处等玩家下令
+//
+// 撞击处理：走进没有轨道的格子 = 脱轨。脱轨后机车退回上一个分岔重新
+// 等选择（记 crashCount、扣分、扣时间），而不是直接判死——玩家还有
+// 机会纠正自己。
+public class RailTrain {
+    public const int MoveOk = 0;
+    public const int MoveStation = 1;
+    public const int MoveCrash = 2;
+    public const int MoveWait = 3;
+
+    public RailNetwork net;
+    public int x;
+    public int y;
+    public int dir;
+    public int pending;
+    public bool waiting;
+    public int lastSwitchX;
+    public int lastSwitchY;
+    public int lastSwitchDir;
+    public int crashCount;
+    public int steps;
+
+    public RailTrain(RailNetwork network) {
+        this.net = network;
+        this.x = 0;
+        this.y = 0;
+        this.dir = RailNetwork.East;
+        this.pending = -1;
+        this.waiting = false;
+        this.lastSwitchX = 0;
+        this.lastSwitchY = 0;
+        this.lastSwitchDir = RailNetwork.East;
+        this.crashCount = 0;
+        this.steps = 0;
+    }
+
+    // 把机车放到货场，朝向给定方向。
+    public void Place(int px, int py, int heading) {
+        this.x = px;
+        this.y = py;
+        this.dir = heading;
+        this.pending = -1;
+        this.waiting = false;
+        this.steps = 0;
+    }
+
+    // 当前分岔的两个可选方向（不含来路）。
+    public List<int> Options() {
+        List<int> list = new List<int>();
+        if (this.net == null) { return list; }
+        if (!this.net.IsSwitch(this.x, this.y)) { return list; }
+        int back = RailNetwork.Opposite(this.dir);
+        for (int d = 0; d < 4; d = d + 1) {
+            if (d == back) { continue; }
+            if (this.net.Linked(this.x, this.y, d)) { list.Add(d); }
+        }
+        return list;
+    }
+
+    // 两个选项里"偏左"的那个（用于 A 键）与"偏右"的那个（用于 D 键）。
+    // 转向量：0=直行 1=右转 3=左转。
+    public int TurnOf(int option) { return (option - this.dir + 4) % 4; }
+
+    public int LeftOption() {
+        List<int> opts = this.Options();
+        if (opts.Count < 2) { return -1; }
+        int a = opts[0];
+        int b = opts[1];
+        if (this.TurnOf(a) == 3) { return a; }
+        if (this.TurnOf(b) == 3) { return b; }
+        if (this.TurnOf(a) == 0) { return a; }
+        return b;
+    }
+
+    public int RightOption() {
+        int l = this.LeftOption();
+        List<int> opts = this.Options();
+        if (opts.Count < 2) { return -1; }
+        if (opts[0] == l) { return opts[1]; }
+        return opts[0];
+    }
+
+    // 玩家的调度命令：选一个方向。
+    public bool Choose(int option) {
+        if (!this.waiting) { return false; }
+        List<int> opts = this.Options();
+        if (!opts.Contains(option)) { return false; }
+        this.pending = option;
+        this.waiting = false;
+        return true;
+    }
+
+    // 走一格。返回 MoveOk / MoveStation / MoveCrash / MoveWait。
+    public int Move() {
+        if (this.net == null) { return MoveOk; }
+        if (this.waiting) { return MoveWait; }
+        int d = this.pending >= 0 ? this.pending : this.dir;
+        int nx = this.x + RailNetwork.Dx(d);
+        int ny = this.y + RailNetwork.Dy(d);
+        if (!this.net.IsTrack(nx, ny)) {
+            // 脱轨：退回上一个分岔，重新等调度。
+            this.x = this.lastSwitchX;
+            this.y = this.lastSwitchY;
+            this.dir = this.lastSwitchDir;
+            this.pending = -1;
+            this.waiting = true;
+            this.crashCount = this.crashCount + 1;
+            return MoveCrash;
+        }
+        this.x = nx;
+        this.y = ny;
+        this.dir = d;
+        this.pending = -1;
+        this.steps = this.steps + 1;
+        if (this.net.IsPlatform(this.x, this.y)) { return MoveStation; }
+        if (this.net.IsSwitch(this.x, this.y)) {
+            this.waiting = true;
+            this.lastSwitchX = this.x;
+            this.lastSwitchY = this.y;
+            this.lastSwitchDir = d;
+            return MoveWait;
+        }
+        return MoveOk;
+    }
+
+    // 站台卸货后掉头（站台是尽头，机车原路返回）。
+    public void Reverse() {
+        this.dir = RailNetwork.Opposite(this.dir);
+        this.pending = -1;
+    }
+
+    // 自动调度（演示/无头冒烟用）：在两个选项里随机挑一个。
+    public bool ChooseRandom(Rng rng) {
+        List<int> opts = this.Options();
+        if (opts.Count < 1) { return false; }
+        int i = 0;
+        if (opts.Count > 1) { i = rng.Range(0, opts.Count); }
+        return this.Choose(opts[i]);
+    }
+}

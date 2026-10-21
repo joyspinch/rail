@@ -1,0 +1,71 @@
+using System;
+using Gui;
+using Game.Kit;
+
+// 逻辑坐标下的画布原语：把 CDraw 的视口映射包一层，让整个界面都写在
+// 逻辑像素里（1280×800 设计分辨率，CDraw.StageViewport 负责等比缩放）。
+public class RailPaint {
+    public static int X(int v) { return CDraw.MapX(v + CDraw.originX); }
+    public static int Y(int v) { return CDraw.MapY(v + CDraw.originY); }
+    public static int S(int v) { return CDraw.MapW(v); }
+
+    public static void Fill(Canvas c, int x, int y, int w, int h, int color) {
+        if (w <= 0 || h <= 0) { return; }
+        c.FillRect(RailPaint.X(x), RailPaint.Y(y), RailPaint.S(w), RailPaint.S(h), color);
+    }
+
+    public static void Rect(Canvas c, int x, int y, int w, int h, int color, int t) {
+        if (w <= 0 || h <= 0 || t <= 0) { return; }
+        c.DrawRect(RailPaint.X(x), RailPaint.Y(y), RailPaint.S(w), RailPaint.S(h), color, RailPaint.S(t));
+    }
+
+    public static void Round(Canvas c, int x, int y, int w, int h, int rad, int color, int t) {
+        if (w <= 0 || h <= 0 || t <= 0) { return; }
+        c.DrawRoundRect(RailPaint.X(x), RailPaint.Y(y), RailPaint.S(w), RailPaint.S(h), RailPaint.S(rad), color, RailPaint.S(t));
+    }
+
+    public static void FillRound(Canvas c, int x, int y, int w, int h, int rad, int color) {
+        if (w <= 0 || h <= 0) { return; }
+        c.FillRoundRect(RailPaint.X(x), RailPaint.Y(y), RailPaint.S(w), RailPaint.S(h), RailPaint.S(rad), color);
+    }
+
+    public static void FillCircle(Canvas c, int cx, int cy, int rad, int color) {
+        if (rad <= 0) { return; }
+        c.FillCircle(RailPaint.X(cx), RailPaint.Y(cy), RailPaint.S(rad), color);
+    }
+
+    public static void Circle(Canvas c, int cx, int cy, int rad, int color, int t) {
+        if (rad <= 0 || t <= 0) { return; }
+        c.DrawCircle(RailPaint.X(cx), RailPaint.Y(cy), RailPaint.S(rad), color, RailPaint.S(t));
+    }
+
+    public static void Text(Canvas c, string text, int x, int y, int size, int color) {
+        if (text == null || text == "") { return; }
+        c.DrawText(RailPaint.X(x), RailPaint.Y(y), text, color, RailPaint.S(size));
+    }
+
+    public static void TextCentered(Canvas c, string text, int cx, int y, int boxW, int size, int color) {
+        if (text == null || text == "") { return; }
+        int tw = c.MeasureText(text, RailPaint.S(size));
+        c.DrawText(RailPaint.X(cx - tw / 2), RailPaint.Y(y), text, color, RailPaint.S(size));
+    }
+
+    // 贴整幅图（逻辑坐标，自动做视口映射）。
+    public static void Blit(Canvas c, string path, int x, int y, int w, int h) {
+        if (path == null || path == "") { return; }
+        CDraw.BlitImage(c, path, x, y, w, h);
+    }
+
+    // 贴图并裁源矩形：视差取景 / 一张图切多块用。
+    // CDraw 公共包里还没有 BlitImageSrc，这里用底层 Canvas.BlitImage
+    // 配 CDraw 的视口映射自己算坐标。
+    public static void BlitSrc(Canvas c, string path, int x, int y, int w, int h,
+                               int sx, int sy, int sw, int sh) {
+        if (path == null || path == "") { return; }
+        string key = CDraw.BlitSource(c, path);
+        if (key == null) { return; }
+        if (sw < 1) { sw = 1; }
+        if (sh < 1) { sh = 1; }
+        c.BlitImage(key, RailPaint.X(x), RailPaint.Y(y), RailPaint.S(w), RailPaint.S(h), sx, sy, sw, sh);
+    }
+}

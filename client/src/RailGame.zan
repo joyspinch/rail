@@ -1,0 +1,683 @@
+using System;
+using System.Collections.Generic;
+using Gui;
+using Game.Kit;
+using Game.Foundation;
+using Game.Foundation.Gui;
+
+// 铁轨快递 · RAIL —— 铁路调度。
+//
+// 玩法闭环：机车自动前进 → 玩家在分岔处选路（A/D 或点按钮）→ 选对了
+// 送到同色站台得分卸货、选错了走进支线脱轨扣分 → 每关限时 → 3 关全过
+// 结算（送达数 / 得分 / 用时），累计数据进存档。
+//
+// 本文件是状态机 + 主循环回调：菜单 / 游戏中 / 结算三个画面，以及关卡
+// 数据（ASCII 地图、站台需求、货物序列、时限）。
+public class RailGame : IGuiHostLoop {
+    public const int ScreenMenu = 0;
+    public const int ScreenPlay = 1;
+    public const int ScreenResult = 2;
+
+    public const int ActStart = 1;
+    public const int ActSettings = 2;
+    public const int ActRetry = 3;
+    public const int ActMenu = 4;
+    public const int ActBranchLeft = 5;
+    public const int ActBranchRight = 6;
+
+    public const int PhaseDispatch = 0;
+    public const int PhaseClear = 1;
+    public const int PhaseFail = 2;
+    public const int PhaseWin = 3;
+
+    public GuiHost host;
+    public GameShell shell;
+    public RailView view;
+    public RailNetwork net;
+    public RailTrain train;
+    public AudioBus bus;
+    public SfxBank bank;
+    public Rng rng;
+    public List<RailButton> buttons;
+
+    public int screen;
+    public int levelIndex;
+    public int score;
+    public int delivered;
+    public int cargoIndex;
+    public int cargoType;
+    public int[] cargoTypes;
+    public int timeLeft;
+    public int elapsed;
+    public int timeAcc;
+    public int phase;
+    public int phaseTimer;
+    public string lastEvent;
+    public int eventTimer;
+    public int moveTimer;
+    public int moveMs;
+    public int autoTimer;
+    public bool cleared;
+    public bool autoDrive;
+    public bool smokeMode;
+    public bool demoMode;
+    public int frames;
+    public int smokeFrames;
+    public bool finished;
+    public int hoverBranch;
+    public int lastSeq;
+    public string capturePath;
+    public int captureFrame;
+    // 事件计数（结算与断言都要用）。
+    public int wrongCount;
+    public int bonusTotal;
+    public int crashTotal;
+    // 调试钩子：直接摆出结算画面（截图/验收用）。
+    public bool resultPreview;
+
+    public RailGame() {
+        this.Init(true);
+    }
+
+    // 无声模式给无头用例用：不开音频设备，纯逻辑。
+    public RailGame(bool withAudio) {
+        this.Init(withAudio);
+    }
+
+    void Init(bool withAudio) {
+        this.buttons = new List<RailButton>();
+        this.view = new RailView();
+        this.shell = new GameShell();
+        this.rng = Rng.Seed(77120261021L);
+        if (withAudio) {
+            this.bus = new AudioBus();
+            this.bank = new SfxBank(this.bus);
+            this.bank.LoadAll("assets/sfx", new string[] {
+                "whistle", "select", "deliver", "error", "crash", "levelup", "win", "fail"
+            });
+        }
+        this.screen = RailGame.ScreenMenu;
+        this.smokeMode = Environment.GetEnvironmentVariable("RAIL_SMOKE") == "1";
+        this.demoMode = Environment.GetEnvironmentVariable("RAIL_DEMO") == "1";
+        this.resultPreview = Environment.GetEnvironmentVariable("RAIL_RESULT") == "1";
+        this.capturePath = Environment.GetEnvironmentVariable("RAIL_CAPTURE");
+        this.captureFrame = 60;
+        this.smokeFrames = 300;
+        string framesEnv = Environment.GetEnvironmentVariable("RAIL_FRAMES");
+        if (framesEnv != "") { this.smokeFrames = Convert.ToInt32(framesEnv); }
+        this.moveMs = 380;
+        this.hoverBranch = -1;
+        this.wrongCount = 0;
+        this.bonusTotal = 0;
+        this.view.LoadAssets();
+    }
+
+    // ----- 关卡数据 -----------------------------------------------------
+
+    public static int LevelCount() { return 3; }
+
+    public static string LevelName(int level) {
+        if (level == 0) { return "晨曦货站"; }
+        if (level == 1) { return "三岔支线"; }
+        return "环城总站";
+    }
+
+    // 地图：'#'空地 '-'横轨 '|竖轨 '*''x'分岔 'C'货场 'S''A''V''B'站台。
+    // 每行等宽；分岔 '*'=东西直通+南向岔道，'x'=东西直通+北向岔道。
+    public static string[] LevelRows(int level) {
+        if (level == 0) {
+            return new string[] {
+                "################",
+                "#........#.....#",
+                "#........|.....#",
+                "#........|.....#",
+                "#C---*---x----S#",
+                "#....|.........#",
+                "#....V.........#",
+                "################"
+            };
+        }
+        if (level == 1) {
+            return new string[] {
+                "####################",
+                "#..................#",
+                "#.......B..........#",
+                "#.......|..........#",
+                "#.......|..........#",
+                "#C--*---x---*-----S#",
+                "#...|.......|......#",
+                "#...|.......|......#",
+                "#...V.......|......#",
+                "####################"
+            };
+        }
+        return new string[] {
+            "########################",
+            "#......................#",
+            "#.......B.......B...B..#",
+            "#.......|.......|...|..#",
+            "#.......|.......|...|..#",
+            "#C--*---x---*---x---x-S#",
+            "#...|.......|..........#",
+            "#...|.......|..........#",
+            "#...V.......|..........#",
+            "########################"
+        };
+    }
+
+    // 站台需求：x, y, 类型 三元组（类型 0红 1蓝 2黄）。
+    public static int[] LevelStations(int level) {
+        if (level == 0) {
+            return new int[] { 5, 6, 0, 14, 4, 1 };
+        }
+        if (level == 1) {
+            return new int[] { 4, 8, 0, 8, 2, 1, 18, 5, 2 };
+        }
+        return new int[] { 4, 8, 0, 8, 2, 1, 16, 2, 2, 20, 2, 1, 22, 5, 0 };
+    }
+
+    // 本关要送的货（按顺序卸）。
+    public static int[] LevelCargo(int level) {
+        if (level == 0) { return new int[] { 0 }; }
+        if (level == 1) { return new int[] { 0, 1, 2 }; }
+        return new int[] { 0, 1, 2, 0 };
+    }
+
+    // 本关时限（秒）。
+    public static int LevelSeconds(int level) {
+        if (level == 0) { return 70; }
+        if (level == 1) { return 90; }
+        return 110;
+    }
+
+    public int CargoTotal() {
+        if (this.cargoTypes == null) { return 0; }
+        return this.cargoTypes.Length;
+    }
+
+    // ----- 主循环回调 ---------------------------------------------------
+
+    public void Start(GuiHost h) {
+        this.host = h;
+        h.Hud().Add(this.shell.Overlay().Root());
+        this.autoDrive = this.shell.AutoDrive();
+        if (this.smokeMode || this.demoMode) {
+            this.autoDrive = true;
+            this.StartLevel(0);
+            this.screen = RailGame.ScreenPlay;
+        }
+        if (this.resultPreview) {
+            this.StartLevel(0);
+            this.score = 690;
+            this.delivered = 5;
+            this.elapsed = 96;
+            this.levelIndex = 2;
+            this.cleared = true;
+            this.shell.RecordScore(this.score);
+            this.shell.RecordDelivered(this.delivered);
+            this.shell.RecordClear();
+            this.screen = RailGame.ScreenResult;
+        }
+    }
+
+    public void Event(GuiHost h, int kind, int keycode) {
+        if (kind == 1) {
+            this.UpdateHover(h.MouseX(), h.MouseY());
+            return;
+        }
+        if (kind == 4) {
+            if (keycode == 27) { this.shell.Overlay().Toggle(); return; }
+            if (keycode == 13 || keycode == 32) {
+                if (this.screen == RailGame.ScreenMenu) { this.StartGame(); }
+                else if (this.screen == RailGame.ScreenResult) { this.StartGame(); }
+                return;
+            }
+            if (keycode == 65) { this.ChooseBranch(0); return; }
+            if (keycode == 68) { this.ChooseBranch(1); return; }
+            return;
+        }
+        if (kind == 3) {
+            if (keycode != 0) { return; }
+            int seq = h.App().window.EventSeq();
+            if (seq == this.lastSeq) { return; }
+            this.lastSeq = seq;
+            this.OnClick(h.MouseX(), h.MouseY());
+            return;
+        }
+    }
+
+    public void FixedUpdate(GuiHost h, int deltaMilliseconds) { }
+
+    public void Update(GuiHost h, int deltaMilliseconds) {
+        this.shell.Overlay().Tick();
+        if (this.bus != null) { this.bus.Update(deltaMilliseconds); }
+        this.frames = this.frames + 1;
+        if (this.smokeMode && this.frames >= this.smokeFrames) {
+            this.Finish();
+            h.RequestStop();
+            return;
+        }
+        if (this.eventTimer > 0) {
+            this.eventTimer = this.eventTimer - 1;
+            if (this.eventTimer <= 0) { this.lastEvent = ""; }
+        }
+        if (this.screen != RailGame.ScreenPlay) { return; }
+        // 自动调度开关实时生效（设置面板改完立刻可用）。
+        if (!this.smokeMode && !this.demoMode) {
+            this.autoDrive = this.shell.AutoDrive();
+        }
+        if (this.phase != RailGame.PhaseDispatch) {
+            this.phaseTimer = this.phaseTimer - deltaMilliseconds;
+            if (this.phaseTimer <= 0) { this.AfterPhase(); }
+            return;
+        }
+        // 倒计时。
+        this.TickClock(deltaMilliseconds);
+        if (this.train == null) { return; }
+        if (this.train.waiting) {
+            // 停在分岔处等调度命令；自动调度模式下由调度员代选。
+            if (this.autoDrive) {
+                this.autoTimer = this.autoTimer + deltaMilliseconds;
+                if (this.autoTimer >= 450) {
+                    this.autoTimer = 0;
+                    int pick = this.AutoPick();
+                    if (pick >= 0 && this.train.Choose(pick)) {
+                        this.PlaySfx("select");
+                    }
+                }
+            }
+            return;
+        }
+        // 自动前进：一 tick 一格。
+        this.moveTimer = this.moveTimer + deltaMilliseconds;
+        if (this.moveTimer >= this.moveMs) {
+            this.moveTimer = this.moveTimer - this.moveMs;
+            this.HandleMove(this.train.Move());
+        }
+    }
+
+    public void Render(GuiHost h, Canvas c, double alpha) {
+        int w = h.StageWidth();
+        int hgt = h.StageHeight();
+        this.BuildButtons(w, hgt);
+        if (this.screen == RailGame.ScreenMenu) {
+            this.view.DrawMenu(c, this, w, hgt);
+        } else if (this.screen == RailGame.ScreenPlay) {
+            this.view.DrawBackground(c, w, hgt);
+            this.view.DrawMap(c, this, w, hgt);
+            this.view.DrawHud(c, this, w);
+            this.view.DrawFooter(c, this, w, hgt);
+            this.view.DrawBanner(c, this, w, hgt);
+        } else {
+            this.view.DrawBackground(c, w, hgt);
+            this.view.DrawResult(c, this, w, hgt);
+        }
+        for (int i = 0; i < this.buttons.Count; i = i + 1) {
+            RailButton b = this.buttons[i];
+            bool hover = b.enabled && this.host != null
+                && this.host.MouseX() >= b.x && this.host.MouseX() < b.x + b.w
+                && this.host.MouseY() >= b.y && this.host.MouseY() < b.y + b.h;
+            this.view.DrawButton(c, b, hover);
+        }
+        if (this.capturePath != "" && this.frames == this.captureFrame) {
+            c.WritePixels(this.capturePath, 0, 0, c.Width(), c.Height());
+            Console.WriteLine("RAIL_CAPTURE " + Convert.ToString(c.Width())
+                + "x" + Convert.ToString(c.Height()));
+        }
+    }
+
+    public void Stop(GuiHost h) {
+        this.Finish();
+    }
+
+    void Finish() {
+        if (this.finished) { return; }
+        this.finished = true;
+        if (this.screen == RailGame.ScreenPlay) {
+            this.shell.RecordScore(this.score);
+            this.shell.RecordDelivered(this.delivered);
+        }
+        this.shell.Save();
+        Console.WriteLine("RAIL_SAVE best=" + Convert.ToString(this.shell.BestScore())
+            + " delivered=" + Convert.ToString(this.shell.TotalDelivered())
+            + " clears=" + Convert.ToString(this.shell.Clears())
+            + " runs=" + Convert.ToString(this.shell.Runs()));
+        if (this.smokeMode) {
+            Console.WriteLine("RAIL_SMOKE_OK frames=" + Convert.ToString(this.frames)
+                + " score=" + Convert.ToString(this.score)
+                + " delivered=" + Convert.ToString(this.delivered)
+                + " level=" + Convert.ToString(this.levelIndex + 1)
+                + " train=" + Convert.ToString(this.train != null ? this.train.x : -1)
+                + "," + Convert.ToString(this.train != null ? this.train.y : -1)
+                + " steps=" + Convert.ToString(this.train != null ? this.train.steps : 0)
+                + " crashes=" + Convert.ToString(this.train != null ? this.train.crashCount : 0)
+                + " sfx=" + Convert.ToString(this.bank != null ? this.bank.Count() : 0));
+        }
+    }
+
+    // ----- 关卡流程 -----------------------------------------------------
+
+    public void StartGame() {
+        this.score = 0;
+        this.delivered = 0;
+        this.cleared = false;
+        this.wrongCount = 0;
+        this.bonusTotal = 0;
+        this.crashTotal = 0;
+        this.levelIndex = 0;
+        this.StartLevel(0);
+        this.screen = RailGame.ScreenPlay;
+        this.PlaySfx("whistle");
+    }
+
+    public void StartLevel(int index) {
+        this.levelIndex = index;
+        this.net = new RailNetwork(RailGame.LevelRows(index));
+        this.net.AssignStations(RailGame.LevelStations(index));
+        this.cargoTypes = RailGame.LevelCargo(index);
+        this.cargoIndex = 0;
+        this.cargoType = this.cargoTypes.Length > 0 ? this.cargoTypes[0] : 0;
+        int seconds = RailGame.LevelSeconds(index);
+        if (this.shell.Strict()) { seconds = seconds * 4 / 5; }
+        this.timeLeft = seconds;
+        this.elapsed = 0;
+        this.timeAcc = 0;
+        this.moveTimer = 0;
+        this.autoTimer = 0;
+        this.phase = RailGame.PhaseDispatch;
+        this.phaseTimer = 0;
+        this.lastEvent = "";
+        this.eventTimer = 0;
+        this.train = new RailTrain(this.net);
+        int depot = this.net.DepotCell();
+        if (depot >= 0) {
+            int dx = this.net.XOf(depot);
+            int dy = this.net.YOf(depot);
+            int heading = RailNetwork.East;
+            for (int d = 0; d < 4; d = d + 1) {
+                if (this.net.Linked(dx, dy, d)) { heading = d; break; }
+            }
+            this.train.Place(dx, dy, heading);
+        }
+    }
+
+    // 时钟推进（毫秒）：倒计时归零即判本关失败。
+    public void TickClock(int deltaMilliseconds) {
+        this.timeAcc = this.timeAcc + deltaMilliseconds;
+        while (this.timeAcc >= 1000) {
+            this.timeAcc = this.timeAcc - 1000;
+            this.timeLeft = this.timeLeft - 1;
+            this.elapsed = this.elapsed + 1;
+            if (this.timeLeft <= 0) {
+                this.timeLeft = 0;
+                this.FailLevel();
+                return;
+            }
+        }
+    }
+
+    // 机车走完一格后的处理。
+    public void HandleMove(int result) {
+        if (result == RailTrain.MoveWait) {
+            this.PlaySfx("whistle");
+            this.SetEvent("前方分岔，请选路");
+            return;
+        }
+        if (result == RailTrain.MoveStation) {
+            int st = this.net.TypeAt(this.train.x, this.train.y);
+            if (RailCargo.Match(this.cargoType, st)) {
+                this.score = this.score + RailCargo.ScoreOf(this.cargoType);
+                this.delivered = this.delivered + 1;
+                this.cargoIndex = this.cargoIndex + 1;
+                this.PlaySfx("deliver");
+                this.SetEvent("送达" + RailCargo.FullNameOf(st)
+                    + "，得分 " + Convert.ToString(RailCargo.ScoreOf(this.cargoType)));
+                if (this.cargoIndex >= this.cargoTypes.Length) {
+                    this.ClearLevel();
+                    return;
+                }
+                this.cargoType = this.cargoTypes[this.cargoIndex];
+            } else {
+                this.score = this.score - RailCargo.WrongPenalty;
+                this.wrongCount = this.wrongCount + 1;
+                this.PlaySfx("error");
+                this.SetEvent("这站台要的是" + RailCargo.NameOf(st)
+                    + "货，送错扣 " + Convert.ToString(RailCargo.WrongPenalty) + " 分");
+            }
+            this.train.Reverse();
+            return;
+        }
+        if (result == RailTrain.MoveCrash) {
+            this.score = this.score - RailCargo.CrashPenalty;
+            this.crashTotal = this.crashTotal + 1;
+            this.timeLeft = this.timeLeft - RailCargo.CrashTimeCost;
+            this.PlaySfx("crash");
+            this.SetEvent("脱轨！退回上一个分岔，扣 "
+                + Convert.ToString(RailCargo.CrashPenalty) + " 分并损失 "
+                + Convert.ToString(RailCargo.CrashTimeCost) + " 秒");
+            if (this.timeLeft <= 0) {
+                this.timeLeft = 0;
+                this.FailLevel();
+            }
+            return;
+        }
+    }
+
+    void ClearLevel() {
+        int bonus = 50 + this.timeLeft * 5;
+        this.score = this.score + bonus;
+        this.bonusTotal = this.bonusTotal + bonus;
+        this.phase = RailGame.PhaseClear;
+        this.phaseTimer = 2200;
+        this.PlaySfx("levelup");
+        this.SetEvent("第 " + Convert.ToString(this.levelIndex + 1)
+            + " 关完成，通关奖励 " + Convert.ToString(bonus) + " 分");
+    }
+
+    void FailLevel() {
+        this.phase = RailGame.PhaseFail;
+        this.phaseTimer = 2200;
+        this.PlaySfx("fail");
+        this.SetEvent("时间到，调度失败");
+    }
+
+    public void AfterPhase() {
+        if (this.phase == RailGame.PhaseClear) {
+            if (this.levelIndex >= RailGame.LevelCount() - 1) {
+                this.cleared = true;
+                this.phase = RailGame.PhaseWin;
+                this.phaseTimer = 2200;
+                this.PlaySfx("win");
+                this.SetEvent("全线贯通！");
+                return;
+            }
+            this.StartLevel(this.levelIndex + 1);
+            this.PlaySfx("whistle");
+            return;
+        }
+        if (this.phase == RailGame.PhaseFail || this.phase == RailGame.PhaseWin) {
+            this.phase = RailGame.PhaseDispatch;
+            this.screen = RailGame.ScreenResult;
+            this.shell.RecordScore(this.score);
+            this.shell.RecordDelivered(this.delivered);
+            if (this.cleared) { this.shell.RecordClear(); }
+        }
+    }
+
+    void SetEvent(string text) {
+        this.lastEvent = text;
+        this.eventTimer = 90;
+    }
+
+    void PlaySfx(string name) {
+        if (this.bank == null) { return; }
+        if (!this.shell.Sfx()) { return; }
+        this.bank.Play(name);
+    }
+
+    // ----- 目标站台与建议 -------------------------------------------------
+
+    // 当前货物该送去哪个站台（最近的同类型站台）；没有则 -1。
+    public int TargetStationCell() {
+        if (this.net == null || this.train == null) { return -1; }
+        List<int> cells = this.net.PlatformCells();
+        int best = -1;
+        int bestLen = 1000000;
+        for (int i = 0; i < cells.Count; i = i + 1) {
+            int idx = cells[i];
+            int sx = this.net.XOf(idx);
+            int sy = this.net.YOf(idx);
+            if (this.net.TypeAt(sx, sy) != this.cargoType) { continue; }
+            List<int> path = this.net.PathTo(this.train.x, this.train.y, sx, sy);
+            if (path.Count == 0) { continue; }
+            if (path.Count < bestLen) {
+                bestLen = path.Count;
+                best = idx;
+            }
+        }
+        return best;
+    }
+
+    // 目标站台离机车还有几格。
+    public int TargetDistance() {
+        int cell = this.TargetStationCell();
+        if (cell < 0 || this.net == null) { return -1; }
+        List<int> path = this.net.PathTo(this.train.x, this.train.y,
+            this.net.XOf(cell), this.net.YOf(cell));
+        return path.Count;
+    }
+
+    // 建议方向：朝目标站台走的第一步；不在分岔上时返回 -1。
+    public int SuggestedDir() {
+        if (this.net == null || this.train == null) { return -1; }
+        int cell = this.TargetStationCell();
+        if (cell < 0) { return -1; }
+        return this.net.FirstStepTo(this.train.x, this.train.y,
+            this.net.XOf(cell), this.net.YOf(cell));
+    }
+
+    // ----- 输入 -----------------------------------------------------------
+
+    // 自动调度：优先走能到目标站台的那条；目标在身后就避开死路支线。
+    public int AutoPick() {
+        if (this.train == null) { return -1; }
+        int l = this.train.LeftOption();
+        int r = this.train.RightOption();
+        int sd = this.SuggestedDir();
+        if (sd == l || sd == r) { return sd; }
+        if (l >= 0 && !this.net.BranchDeadEnd(this.train.x, this.train.y, l)) { return l; }
+        if (r >= 0 && !this.net.BranchDeadEnd(this.train.x, this.train.y, r)) { return r; }
+        if (l >= 0) { return l; }
+        return r;
+    }
+
+    void ChooseBranch(int which) {
+        if (this.screen != RailGame.ScreenPlay) { return; }
+        if (this.train == null || !this.train.waiting) { return; }
+        int dir = which == 0 ? this.train.LeftOption() : this.train.RightOption();
+        if (dir < 0) { return; }
+        if (this.train.Choose(dir)) {
+            this.PlaySfx("select");
+            this.SetEvent("调度：驶向" + RailNetwork.DirName(dir) + "轨");
+        }
+    }
+
+    void UpdateHover(int mx, int my) {
+        this.hoverBranch = -1;
+        for (int i = 0; i < this.buttons.Count; i = i + 1) {
+            RailButton b = this.buttons[i];
+            if (mx < b.x || mx >= b.x + b.w || my < b.y || my >= b.y + b.h) { continue; }
+            if (b.action == RailGame.ActBranchLeft) { this.hoverBranch = 0; }
+            if (b.action == RailGame.ActBranchRight) { this.hoverBranch = 1; }
+            return;
+        }
+    }
+
+    void OnClick(int mx, int my) {
+        if (this.shell.Overlay().IsOpen()) { return; }
+        for (int i = 0; i < this.buttons.Count; i = i + 1) {
+            RailButton b = this.buttons[i];
+            if (!b.enabled) { continue; }
+            if (mx < b.x || mx >= b.x + b.w || my < b.y || my >= b.y + b.h) { continue; }
+            this.OnButton(b);
+            return;
+        }
+    }
+
+    void OnButton(RailButton b) {
+        if (b.action == RailGame.ActStart || b.action == RailGame.ActRetry) {
+            this.StartGame();
+            return;
+        }
+        if (b.action == RailGame.ActMenu) {
+            this.screen = RailGame.ScreenMenu;
+            return;
+        }
+        if (b.action == RailGame.ActSettings) {
+            this.shell.Overlay().Toggle();
+            return;
+        }
+        if (b.action == RailGame.ActBranchLeft) { this.ChooseBranch(0); return; }
+        if (b.action == RailGame.ActBranchRight) { this.ChooseBranch(1); return; }
+    }
+
+    // ----- 布局 -----------------------------------------------------------
+
+    void BuildButtons(int w, int h) {
+        this.buttons.Clear();
+        if (this.screen == RailGame.ScreenMenu) {
+            this.buttons.Add(new RailButton("开始调度", 1, w / 2 - 90, h / 2 + 190, 180, 46, true, RailGame.ActStart));
+            this.buttons.Add(new RailButton("设置", 0, w - 100, h - 40, 84, 32, true, RailGame.ActSettings));
+            return;
+        }
+        if (this.screen == RailGame.ScreenResult) {
+            this.buttons.Add(new RailButton("再来一次", 1, w / 2 - 210, h / 2 + 150, 190, 46, true, RailGame.ActRetry));
+            this.buttons.Add(new RailButton("回到主菜单", 0, w / 2 + 20, h / 2 + 150, 190, 46, true, RailGame.ActMenu));
+            this.buttons.Add(new RailButton("设置", 0, w - 100, h - 40, 84, 32, true, RailGame.ActSettings));
+            return;
+        }
+        if (this.train != null && this.train.waiting) {
+            int bw = 236;
+            int bh = 54;
+            int by = h - 120;
+            int gap = 28;
+            int bx = (w - (bw * 2 + gap)) / 2;
+            int l = this.train.LeftOption();
+            int r = this.train.RightOption();
+            this.buttons.Add(new RailButton(this.BranchLabel("A", 0, l), 1,
+                bx, by, bw, bh, l >= 0, RailGame.ActBranchLeft));
+            this.buttons.Add(new RailButton(this.BranchLabel("D", 1, r), 1,
+                bx + bw + gap, by, bw, bh, r >= 0, RailGame.ActBranchRight));
+        }
+        this.buttons.Add(new RailButton("设置", 0, w - 100, h - 40, 84, 32, true, RailGame.ActSettings));
+    }
+
+    // 分岔按钮文案：按键 + 方位 + 相对转向。
+    string BranchLabel(string key, int which, int dir) {
+        if (dir < 0) { return key + " 无可用方向"; }
+        int turn = this.train.TurnOf(dir);
+        string rel = "直行";
+        if (turn == 1) { rel = "右转"; }
+        if (turn == 3) { rel = "左转"; }
+        return key + "  " + RailNetwork.DirName(dir) + "轨（" + rel + "）";
+    }
+
+    public int CellSize() {
+        int availW = this.host != null ? this.host.StageWidth() : RailView.DesignW;
+        int availH = this.host != null ? this.host.StageHeight() : RailView.DesignH;
+        if (this.net == null) { return 48; }
+        int cw = (availW - 80) / this.net.width;
+        int ch = (availH - 280) / this.net.height;
+        int cell = cw < ch ? cw : ch;
+        if (cell > 64) { cell = 64; }
+        if (cell < 24) { cell = 24; }
+        return cell;
+    }
+
+    public int MapTop() { return RailView.HudH + 26; }
+
+    public int MapLeft(int w) {
+        if (this.net == null) { return 0; }
+        return (w - this.net.width * this.CellSize()) / 2;
+    }
+}

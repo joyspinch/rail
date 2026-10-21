@@ -1,0 +1,310 @@
+using System;
+using System.Collections.Generic;
+
+// 铁路网：ASCII 网格地图 → 连接掩码 + 站台表。
+//
+// 地图字符（每格声明自己往哪个方向接轨道）：
+//   '#'  空地/围墙
+//   '-'  东西向直轨        '|'  南北向直轨
+//   '+'  分岔（缺西）      '*'  分岔（缺北）      'x'  分岔（缺南）      'o'  分岔（缺东）
+//   'C'  货场（只接东）—— 机车出发点
+//   'S'  站台（只接西，机车自西向东进站）   'A' 站台（只接东）
+//   'V'  站台（只接北，机车自北向南进站）   'B' 站台（只接南）
+//
+// 两格相邻不等于相连：必须互相声明了对方方向才算连上。轨道因此是
+// 一棵树（每个分岔 3 个接头，每个站台/货场 1 个接头），任意两点之间
+// 的路径唯一——"往哪边走能到哪个站台"是确定答案，不是猜谜。
+public class RailNetwork {
+    public const int North = 0;
+    public const int East = 1;
+    public const int South = 2;
+    public const int West = 3;
+
+    public const int KindEmpty = 0;
+    public const int KindTrack = 1;
+    public const int KindPlatform = 2;
+    public const int KindDepot = 3;
+
+    public int width;
+    public int height;
+    public string[] rows;
+    public int[] masks;        // 每格的连接掩码（bit0=N bit1=E bit2=S bit3=W）
+    public int[] kinds;        // KindEmpty / KindTrack / KindPlatform / KindDepot
+    public int[] types;        // 站台需求类型（-1 = 未指定）
+    public int platformCount;
+
+    public RailNetwork(string[] mapRows) {
+        this.rows = mapRows;
+        this.height = mapRows.Length;
+        this.width = 0;
+        for (int y = 0; y < this.height; y = y + 1) {
+            int len = mapRows[y].Length;
+            if (len > this.width) { this.width = len; }
+        }
+        int n = this.width * this.height;
+        this.masks = new int[n];
+        this.kinds = new int[n];
+        this.types = new int[n];
+        this.platformCount = 0;
+        for (int y = 0; y < this.height; y = y + 1) {
+            string row = mapRows[y];
+            for (int x = 0; x < row.Length; x = x + 1) {
+                int idx = y * this.width + x;
+                string ch = row.Substring(x, 1);
+                this.masks[idx] = RailNetwork.MaskOfChar(ch);
+                int k = RailNetwork.KindOfChar(ch);
+                this.kinds[idx] = k;
+                this.types[idx] = -1;
+                if (k == KindPlatform) { this.platformCount = this.platformCount + 1; }
+            }
+        }
+    }
+
+    // 字符 → 连接掩码。
+    public static int MaskOfChar(string ch) {
+        if (ch == "-") { return 10; }   // E|W
+        if (ch == "|") { return 5; }    // N|S
+        if (ch == "+") { return 7; }    // N|E|S
+        if (ch == "*") { return 14; }   // E|S|W
+        if (ch == "x") { return 11; }   // N|E|W
+        if (ch == "o") { return 13; }   // N|S|W
+        if (ch == "C") { return 2; }    // E（货场）
+        if (ch == "S") { return 8; }    // W（站台）
+        if (ch == "A") { return 2; }    // E（站台）
+        if (ch == "V") { return 1; }    // N（站台）
+        if (ch == "B") { return 4; }    // S（站台）
+        return 0;                      // '#' 与未知字符
+    }
+
+    public static int KindOfChar(string ch) {
+        if (ch == "S" || ch == "A" || ch == "V" || ch == "B") { return KindPlatform; }
+        if (ch == "C") { return KindDepot; }
+        if (RailNetwork.MaskOfChar(ch) != 0) { return KindTrack; }
+        return KindEmpty;
+    }
+
+    // 站台需求类型：按坐标直接点名，避免"行优先顺序"这种隐式约定。
+    // triples = [x, y, type, x, y, type, ...]
+    public void AssignStations(int[] triples) {
+        if (triples == null) { return; }
+        for (int i = 0; i + 2 < triples.Length; i = i + 3) {
+            int x = triples[i];
+            int y = triples[i + 1];
+            if (!this.InBounds(x, y)) { continue; }
+            int idx = this.Index(x, y);
+            if (this.kinds[idx] != KindPlatform) { continue; }
+            this.types[idx] = triples[i + 2];
+        }
+    }
+
+    public int Index(int x, int y) { return y * this.width + x; }
+    public int XOf(int idx) { return idx % this.width; }
+    public int YOf(int idx) { return idx / this.width; }
+
+    public bool InBounds(int x, int y) {
+        return x >= 0 && y >= 0 && x < this.width && y < this.height;
+    }
+
+    public int MaskAt(int x, int y) {
+        if (!this.InBounds(x, y)) { return 0; }
+        return this.masks[this.Index(x, y)];
+    }
+
+    public int KindAt(int x, int y) {
+        if (!this.InBounds(x, y)) { return KindEmpty; }
+        return this.kinds[this.Index(x, y)];
+    }
+
+    public int TypeAt(int x, int y) {
+        if (!this.InBounds(x, y)) { return -1; }
+        return this.types[this.Index(x, y)];
+    }
+
+    public bool IsTrack(int x, int y) { return this.MaskAt(x, y) != 0; }
+    public bool IsPlatform(int x, int y) { return this.KindAt(x, y) == KindPlatform; }
+    public bool IsDepot(int x, int y) { return this.KindAt(x, y) == KindDepot; }
+
+    public static int Dx(int dir) {
+        if (dir == East) { return 1; }
+        if (dir == West) { return -1; }
+        return 0;
+    }
+
+    public static int Dy(int dir) {
+        if (dir == North) { return -1; }
+        if (dir == South) { return 1; }
+        return 0;
+    }
+
+    public static int Opposite(int dir) { return (dir + 2) % 4; }
+
+    public static string DirName(int dir) {
+        if (dir == North) { return "北"; }
+        if (dir == East) { return "东"; }
+        if (dir == South) { return "南"; }
+        if (dir == West) { return "西"; }
+        return "?";
+    }
+
+    // (x,y) 与 dir 方向的邻居是否真正相连（两边都声明了对方才算）。
+    public bool Linked(int x, int y, int dir) {
+        int m = this.MaskAt(x, y);
+        if ((m & (1 << dir)) == 0) { return false; }
+        int nx = x + RailNetwork.Dx(dir);
+        int ny = y + RailNetwork.Dy(dir);
+        if (!this.InBounds(nx, ny)) { return false; }
+        int nm = this.MaskAt(nx, ny);
+        if ((nm & (1 << RailNetwork.Opposite(dir))) == 0) { return false; }
+        return true;
+    }
+
+    // 真正连上的邻居数：1 = 尽头（货场/站台/死胡同），3 = 分岔。
+    public int Degree(int x, int y) {
+        int c = 0;
+        for (int d = 0; d < 4; d = d + 1) {
+            if (this.Linked(x, y, d)) { c = c + 1; }
+        }
+        return c;
+    }
+
+    public bool IsSwitch(int x, int y) {
+        return this.IsTrack(x, y) && this.Degree(x, y) == 3;
+    }
+
+    public bool IsDeadEnd(int x, int y) {
+        return this.IsTrack(x, y) && this.Degree(x, y) == 1;
+    }
+
+    // 从 (sx,sy) 走到 (tx,ty) 的路径（不含起点、含终点）。树上唯一。
+    public List<int> PathTo(int sx, int sy, int tx, int ty) {
+        List<int> empty = new List<int>();
+        if (!this.InBounds(sx, sy) || !this.InBounds(tx, ty)) { return empty; }
+        int n = this.width * this.height;
+        int[] parent = new int[n];
+        bool[] seen = new bool[n];
+        for (int i = 0; i < n; i = i + 1) {
+            parent[i] = -1;
+            seen[i] = false;
+        }
+        int[] queue = new int[n];
+        int head = 0;
+        int tail = 0;
+        int start = this.Index(sx, sy);
+        int target = this.Index(tx, ty);
+        queue[tail] = start;
+        tail = tail + 1;
+        seen[start] = true;
+        while (head < tail) {
+            int cur = queue[head];
+            head = head + 1;
+            if (cur == target) { break; }
+            int cx = this.XOf(cur);
+            int cy = this.YOf(cur);
+            for (int d = 0; d < 4; d = d + 1) {
+                if (!this.Linked(cx, cy, d)) { continue; }
+                int nx = cx + RailNetwork.Dx(d);
+                int ny = cy + RailNetwork.Dy(d);
+                if (!this.InBounds(nx, ny)) { continue; }
+                int ni = this.Index(nx, ny);
+                if (seen[ni]) { continue; }
+                seen[ni] = true;
+                parent[ni] = cur;
+                queue[tail] = ni;
+                tail = tail + 1;
+            }
+        }
+        if (!seen[target]) { return empty; }
+        List<int> path = new List<int>();
+        int cur = target;
+        while (cur != start) {
+            path.Add(cur);
+            cur = parent[cur];
+            if (cur < 0) { return empty; }
+        }
+        List<int> rev = new List<int>();
+        for (int i = path.Count - 1; i >= 0; i = i - 1) { rev.Add(path[i]); }
+        return rev;
+    }
+
+    // 从 (sx,sy) 走向 (tx,ty) 的第一步方向；不可达返回 -1。
+    public int FirstStepTo(int sx, int sy, int tx, int ty) {
+        List<int> path = this.PathTo(sx, sy, tx, ty);
+        if (path.Count == 0) { return -1; }
+        int nx = this.XOf(path[0]);
+        int ny = this.YOf(path[0]);
+        for (int d = 0; d < 4; d = d + 1) {
+            if (sx + RailNetwork.Dx(d) == nx && sy + RailNetwork.Dy(d) == ny) { return d; }
+        }
+        return -1;
+    }
+
+    // 分岔的直通轴：东西直轨返回 true。用于选贴图。
+    public bool HorizontalAxis(int x, int y) {
+        int m = this.MaskAt(x, y);
+        bool ew = (m & (1 << East)) != 0 && (m & (1 << West)) != 0;
+        bool ns = (m & (1 << North)) != 0 && (m & (1 << South)) != 0;
+        if (ew && !ns) { return true; }
+        return false;
+    }
+
+    // 分岔的岔道方向（不在直通轴上的那一头）。
+    public int BranchDir(int x, int y) {
+        int m = this.MaskAt(x, y);
+        if (this.HorizontalAxis(x, y)) {
+            if ((m & (1 << North)) != 0) { return North; }
+            if ((m & (1 << South)) != 0) { return South; }
+        } else {
+            if ((m & (1 << East)) != 0) { return East; }
+            if ((m & (1 << West)) != 0) { return West; }
+        }
+        return -1;
+    }
+
+    // 从 (x,y) 沿 dir 走出去的那条支线是不是死路（走到尽头不是站台）。
+    // 自动调度用它避开撞车的岔道。
+    public bool BranchDeadEnd(int x, int y, int dir) {
+        int cx = x + RailNetwork.Dx(dir);
+        int cy = y + RailNetwork.Dy(dir);
+        for (int k = 0; k < 64; k = k + 1) {
+            if (!this.IsTrack(cx, cy)) { return true; }
+            if (this.IsPlatform(cx, cy)) { return false; }
+            if (this.IsSwitch(cx, cy)) { return false; }
+            if (this.Degree(cx, cy) <= 1) { return true; }
+            cx = cx + RailNetwork.Dx(dir);
+            cy = cy + RailNetwork.Dy(dir);
+        }
+        return true;
+    }
+
+    // 站台列表（按行优先顺序返回格坐标）。
+    public List<int> PlatformCells() {
+        List<int> list = new List<int>();
+        for (int y = 0; y < this.height; y = y + 1) {
+            for (int x = 0; x < this.width; x = x + 1) {
+                if (this.kinds[this.Index(x, y)] == KindPlatform) {
+                    list.Add(this.Index(x, y));
+                }
+            }
+        }
+        return list;
+    }
+
+    // 货场（机车出发点）坐标；没有货场返回 -1。
+    public int DepotCell() {
+        for (int y = 0; y < this.height; y = y + 1) {
+            for (int x = 0; x < this.width; x = x + 1) {
+                if (this.kinds[this.Index(x, y)] == KindDepot) { return this.Index(x, y); }
+            }
+        }
+        return -1;
+    }
+
+    // 轨道总长（供自检：地图里到底有多少节轨）。
+    public int TrackCellCount() {
+        int c = 0;
+        for (int i = 0; i < this.masks.Length; i = i + 1) {
+            if (this.masks[i] != 0) { c = c + 1; }
+        }
+        return c;
+    }
+}
