@@ -94,7 +94,7 @@ public class RailView {
     // 面板底板：九宫格（ui_panel.png）。找不到贴图就退回纯色圆角矩形。
     public void Panel(Canvas c, int x, int y, int w, int h) {
         if (this.panelPath != "") {
-            RailPaint.NineSlice(c, this.panelPath, x, y, w, h, RailView.PanelBorder);
+            CKitSlice.NineSlice(c, this.panelPath, x, y, w, h, RailView.PanelBorder);
         } else {
             RailPaint.FillRound(c, x, y, w, h, 10, RailPalette.PanelBg);
             RailPaint.Round(c, x, y, w, h, 10, RailPalette.BrassDim, 2);
@@ -104,7 +104,7 @@ public class RailView {
     // 接触阴影：物体落地的那一小块暗影（椭圆软斑）。
     public void ContactShadow(Canvas c, int x, int y, int w, int h) {
         if (this.shadowPath != "") {
-            RailPaint.Blit(c, this.shadowPath, x, y, w, h);
+            CDraw.BlitImage(c, this.shadowPath, x, y, w, h);
         } else {
             RailPaint.FillRound(c, x + w / 4, y + h / 3, w / 2, h / 2, h / 2,
                 RailPalette.ContactShadow);
@@ -116,17 +116,17 @@ public class RailView {
     // 背景大图 + 低频层次（云影/雾带 + 暗角）。找不到贴图就退回渐变底。
     public void DrawBackground(Canvas c, int w, int h) {
         if (this.bgPath != "") {
-            RailPaint.Blit(c, this.bgPath, 0, 0, w, h);
+            CDraw.BlitImage(c, this.bgPath, 0, 0, w, h);
         } else {
             c.FillVGrad(0, 0, w, h, 0xFF2C3E2A, 0xFF16210F);
         }
         // 云影 + 雾带：俯视航拍该有的**低频**明暗层次（不是噪点）。
         if (this.overlayPath != "") {
-            RailPaint.Blit(c, this.overlayPath, 0, 0, w, h);
+            CDraw.BlitImage(c, this.overlayPath, 0, 0, w, h);
         }
         // 暗角：把注意力收回画面中心。
         if (this.vignettePath != "") {
-            RailPaint.Blit(c, this.vignettePath, 0, 0, w, h);
+            CDraw.BlitImage(c, this.vignettePath, 0, 0, w, h);
         }
         // 压暗一层，保证轨道与 HUD 读得清。
         RailPaint.Fill(c, 0, 0, w, h, 0x33000000);
@@ -137,9 +137,9 @@ public class RailView {
         this.Panel(c, 0, 0, w, RailView.HudH);
         RailPaint.Fill(c, 0, RailView.HudH - 2, w, 2, RailPalette.BrassDim);
 
-        RailPaint.TextShadow(c, "第" + Convert.ToString(g.levelIndex + 1) + "关 · "
+        CText.DrawShadowPx(c, "第" + Convert.ToString(g.levelIndex + 1) + "关 · "
             + RailGame.LevelName(g.levelIndex), 22, 12, 20, RailPalette.BrassText);
-        RailPaint.TextShadow(c, "得分 " + Convert.ToString(g.score)
+        CText.DrawShadowPx(c, "得分 " + Convert.ToString(g.score)
             + "    本关 " + Convert.ToString(g.cargoIndex)
             + "/" + Convert.ToString(g.CargoTotal())
             + "    累计送达 " + Convert.ToString(g.delivered),
@@ -150,12 +150,12 @@ public class RailView {
         int cargoColor = RailCargo.ColorOf(g.cargoType);
         RailPaint.FillRound(c, bx - 2, 14, 38, 38, 7, RailPalette.BrassDim);
         RailPaint.FillRound(c, bx + 2, 18, 30, 30, 5, cargoColor);
-        RailPaint.TextShadow(c, "车上：" + RailCargo.FullNameOf(g.cargoType),
+        CText.DrawShadowPx(c, "车上：" + RailCargo.FullNameOf(g.cargoType),
             bx + 44, 14, 17, RailPalette.TextPrimary);
         int dist = g.TargetDistance();
         string target = "卸给同色站台";
         if (dist >= 0) { target = "目标 " + RailCargo.NameOf(g.cargoType) + "台 · " + Convert.ToString(dist) + " 格"; }
-        RailPaint.TextShadow(c, target, bx + 44, 40, 14, RailPalette.TextSecondary);
+        CText.DrawShadowPx(c, target, bx + 44, 40, 14, RailPalette.TextSecondary);
 
         this.DrawTimer(c, g, w);
     }
@@ -178,10 +178,10 @@ public class RailView {
         // 大号剩余秒数。
         string secs = Convert.ToString(g.timeLeft);
         int numColor = low ? RailPalette.Danger : RailPalette.TextPrimary;
-        RailPaint.TextShadow(c, secs, x0 + 26, 6, 30, numColor);
-        int nw = RailPaint.MeasureLogical(secs, 30);
-        RailPaint.TextShadow(c, "秒", x0 + 30 + nw, 18, 16, RailPalette.TextSecondary);
-        RailPaint.TextShadow(c, "用时 " + Convert.ToString(g.elapsed) + " 秒",
+        CText.DrawShadowPx(c, secs, x0 + 26, 6, 30, numColor);
+        int nw = CText.WidthPx(secs, 30);
+        CText.DrawShadowPx(c, "秒", x0 + 30 + nw, 18, 16, RailPalette.TextSecondary);
+        CText.DrawShadowPx(c, "用时 " + Convert.ToString(g.elapsed) + " 秒",
             x0, 48, 14, RailPalette.TextTertiary);
 
         // 压力表表盘：指针 = 剩余时间占比（满表在左下，空表在右下）。
@@ -189,7 +189,7 @@ public class RailView {
         int gy = 6;
         int gs = 72;
         if (this.gaugePath != "") {
-            RailPaint.Blit(c, this.gaugePath, gx, gy, gs, gs);
+            CDraw.BlitImage(c, this.gaugePath, gx, gy, gs, gs);
         } else {
             RailPaint.FillCircle(c, gx + gs / 2, gy + gs / 2, gs / 2, RailPalette.Brass);
             RailPaint.FillCircle(c, gx + gs / 2, gy + gs / 2, gs / 2 - 5, RailPalette.DialFace);
@@ -225,9 +225,9 @@ public class RailView {
         RailPaint.Fill(c, 0, h / 2 - 74, w, 148, 0x99000000);
         RailPaint.Fill(c, 0, h / 2 - 74, w, 2, RailPalette.Brass);
         RailPaint.Fill(c, 0, h / 2 + 72, w, 2, RailPalette.Brass);
-        RailPaint.TextOutlined(c, title, w / 2, h / 2 - 44, 44,
+        CText.DrawCenteredOutlinedPx(c, title, w / 2, h / 2 - 44, 44,
             RailPalette.BrassText, RailPalette.OilDeep);
-        RailPaint.TextCenteredShadow(c, g.lastEvent, w / 2, h / 2 + 16, 18,
+        CText.DrawCenteredShadowPx(c, g.lastEvent, w / 2, h / 2 + 16, 18,
             RailPalette.TextPrimary);
     }
 
@@ -260,7 +260,7 @@ public class RailView {
                     if (branch == RailNetwork.North) { sp = this.switchNPath; }
                     if (branch == RailNetwork.South) { sp = this.switchSPath; }
                     if (sp != "") {
-                        RailPaint.Blit(c, sp, px, py, cell, cell);
+                        CDraw.BlitImage(c, sp, px, py, cell, cell);
                     } else {
                         RailPaint.Fill(c, px + 2, py + cell / 2 - 3, cell - 4, 6, RailPalette.BrassDim);
                     }
@@ -268,13 +268,13 @@ public class RailView {
                 }
                 if (net.HorizontalAxis(x, y)) {
                     if (this.trackHPath != "") {
-                        RailPaint.Blit(c, this.trackHPath, px, py, cell, cell);
+                        CDraw.BlitImage(c, this.trackHPath, px, py, cell, cell);
                     } else {
                         RailPaint.Fill(c, px, py + cell / 2 - 3, cell, 6, RailPalette.BrassDim);
                     }
                 } else {
                     if (this.trackVPath != "") {
-                        RailPaint.Blit(c, this.trackVPath, px, py, cell, cell);
+                        CDraw.BlitImage(c, this.trackVPath, px, py, cell, cell);
                     } else {
                         RailPaint.Fill(c, px + cell / 2 - 3, py, 6, cell, RailPalette.BrassDim);
                     }
@@ -353,7 +353,7 @@ public class RailView {
         this.ContactShadow(c, cgx, cgy + crate - crate / 3, (int)(crate * 1.2f),
             (int)(crate * 0.5f));
         if (this.cargoSheetPath != "") {
-            RailPaint.BlitSrc(c, this.cargoSheetPath, cgx, cgy, crate, crate,
+            CDraw.BlitImageSrc(c, this.cargoSheetPath, cgx, cgy, crate, crate,
                 RailFacing.CargoSrcX(frame), 0,
                 RailFacing.CargoFrameW, RailFacing.CargoFrameH);
         } else {
@@ -369,7 +369,7 @@ public class RailView {
         int dx = ccx - size / 2 + bobX;
         int dy = ccy - size / 2 + bobY;
         if (this.trainSheetPath != "") {
-            RailPaint.BlitSrc(c, this.trainSheetPath, dx, dy, size, size,
+            CDraw.BlitImageSrc(c, this.trainSheetPath, dx, dy, size, size,
                 RailFacing.TrainSrcX(frame), 0,
                 RailFacing.TrainFrameW, RailFacing.TrainFrameH);
         } else {
@@ -395,12 +395,12 @@ public class RailView {
         this.ContactShadow(c, dx + size / 8, dy + size - size / 5,
             (int)(size * 0.8f), (int)(size * 0.28f));
         if (this.stationPath != "") {
-            RailPaint.Blit(c, this.stationPath, dx, dy, size, size);
+            CDraw.BlitImage(c, this.stationPath, dx, dy, size, size);
         } else {
             RailPaint.FillRound(c, dx + 4, dy + 8, size - 8, size - 16, 4, 0xFFC9C0AE);
         }
         if (!showBadge) {
-            RailPaint.TextCentered(c, "始", px + cell / 2, py + cell / 2 - 8, cell, 14,
+            CText.DrawCenteredPx(c, "始", px + cell / 2, py + cell / 2 - 8, 14,
                 RailPalette.TextInverse);
             return;
         }
@@ -411,8 +411,7 @@ public class RailView {
             RailCargo.ColorOf(type));
         RailPaint.Circle(c, bx + badge / 2, by + badge / 2, badge / 2,
             RailPalette.OilDeep, 2);
-        RailPaint.TextCentered(c, RailCargo.NameOf(type), bx + badge / 2, by + 3,
-            badge, 13, RailPalette.TextInverse);
+        CText.DrawCenteredPx(c, RailCargo.NameOf(type), bx + badge / 2, by + 3, 13, RailPalette.TextInverse);
     }
 
     // 底部提示条：分岔命令 / 操作说明。
@@ -421,16 +420,16 @@ public class RailView {
         this.Panel(c, 0, y, w, RailView.FooterH);
         RailPaint.Fill(c, 0, y, w, 2, RailPalette.BrassDim);
         if (g.train != null && g.train.waiting) {
-            RailPaint.TextShadow(c, "分岔调度：按 A / D 或点击下方按钮选路 · 鼠标移到按钮上可预览支线",
+            CText.DrawShadowPx(c, "分岔调度：按 A / D 或点击下方按钮选路 · 鼠标移到按钮上可预览支线",
                 22, y + 16, 15, RailPalette.BrassText);
         } else {
-            RailPaint.TextShadow(c, "机车自动前进 · 在分岔处选路 · Esc 打开设置",
+            CText.DrawShadowPx(c, "机车自动前进 · 在分岔处选路 · Esc 打开设置",
                 22, y + 16, 15, RailPalette.TextSecondary);
         }
         string ev = g.lastEvent;
         if (ev != "") {
-            int tw = RailPaint.MeasureLogical(ev, 15);
-            RailPaint.TextShadow(c, ev, w - 140 - tw, y + 16, 15, RailPalette.BrassText);
+            int tw = CText.WidthPx(ev, 15);
+            CText.DrawShadowPx(c, ev, w - 140 - tw, y + 16, 15, RailPalette.BrassText);
         }
     }
 
@@ -460,23 +459,23 @@ public class RailView {
         int px = w / 2 - pw / 2;
         int py = 130;
         this.Panel(c, px, py, pw, ph);
-        RailPaint.TextOutlined(c, "铁 轨 快 递", w / 2, py + 32, 52,
+        CText.DrawCenteredOutlinedPx(c, "铁 轨 快 递", w / 2, py + 32, 52,
             RailPalette.BrassText, RailPalette.OilDeep);
-        RailPaint.TextCenteredShadow(c, "RAIL · 铁路调度", w / 2, py + 96, 20,
+        CText.DrawCenteredShadowPx(c, "RAIL · 铁路调度", w / 2, py + 96, 20,
             RailPalette.TextSecondary);
         RailPaint.Fill(c, px + 60, py + 128, pw - 120, 1, RailPalette.BrassDim);
-        RailPaint.TextCenteredShadow(c,
+        CText.DrawCenteredShadowPx(c,
             "最高得分 " + Convert.ToString(g.shell.BestScore())
             + "    累计送达 " + Convert.ToString(g.shell.TotalDelivered())
             + "    通关次数 " + Convert.ToString(g.shell.Clears())
             + "    出场 " + Convert.ToString(g.shell.Runs()),
             w / 2, py + 146, 17, RailPalette.TextPrimary);
-        RailPaint.TextCenteredShadow(c,
+        CText.DrawCenteredShadowPx(c,
             "把车上的货运到同色站台得分；送错站台扣分，走错支线会脱轨。每关限时。",
             w / 2, py + 180, 15, RailPalette.TextSecondary);
-        RailPaint.TextCenteredShadow(c, "鼠标移到按钮上预览支线，点击或按 A / D 选路",
+        CText.DrawCenteredShadowPx(c, "鼠标移到按钮上预览支线，点击或按 A / D 选路",
             w / 2, py + 206, 15, RailPalette.TextSecondary);
-        RailPaint.TextCenteredShadow(c, "3 关递进 · 通关结算",
+        CText.DrawCenteredShadowPx(c, "3 关递进 · 通关结算",
             w / 2, py + 232, 15, RailPalette.TextTertiary);
     }
 
@@ -490,31 +489,31 @@ public class RailView {
         this.Panel(c, px, py, pw, ph);
         string title = "调度失败";
         if (g.cleared) { title = "全线贯通"; }
-        RailPaint.TextOutlined(c, title, px + pw / 2, py + 24, 32,
+        CText.DrawCenteredOutlinedPx(c, title, px + pw / 2, py + 24, 32,
             g.cleared ? RailPalette.BrassText : RailPalette.Danger, RailPalette.OilDeep);
-        RailPaint.TextCenteredShadow(c, "第 " + Convert.ToString(g.levelIndex + 1) + " 关 · "
+        CText.DrawCenteredShadowPx(c, "第 " + Convert.ToString(g.levelIndex + 1) + " 关 · "
             + RailGame.LevelName(g.levelIndex), px + pw / 2, py + 70, 16,
             RailPalette.TextSecondary);
 
         int ty = py + 112;
-        RailPaint.TextShadow(c, "本局得分", px + 60, ty, 17, RailPalette.TextSecondary);
-        RailPaint.TextShadow(c, Convert.ToString(g.score), px + 250, ty, 17,
+        CText.DrawShadowPx(c, "本局得分", px + 60, ty, 17, RailPalette.TextSecondary);
+        CText.DrawShadowPx(c, Convert.ToString(g.score), px + 250, ty, 17,
             RailPalette.BrassText);
         ty = ty + 32;
-        RailPaint.TextShadow(c, "送达货物", px + 60, ty, 17, RailPalette.TextSecondary);
-        RailPaint.TextShadow(c, Convert.ToString(g.delivered), px + 250, ty, 17,
+        CText.DrawShadowPx(c, "送达货物", px + 60, ty, 17, RailPalette.TextSecondary);
+        CText.DrawShadowPx(c, Convert.ToString(g.delivered), px + 250, ty, 17,
             RailPalette.Success);
         ty = ty + 32;
-        RailPaint.TextShadow(c, "用时", px + 60, ty, 17, RailPalette.TextSecondary);
-        RailPaint.TextShadow(c, Convert.ToString(g.elapsed) + " 秒", px + 250, ty, 17,
+        CText.DrawShadowPx(c, "用时", px + 60, ty, 17, RailPalette.TextSecondary);
+        CText.DrawShadowPx(c, Convert.ToString(g.elapsed) + " 秒", px + 250, ty, 17,
             RailPalette.TextPrimary);
         ty = ty + 32;
-        RailPaint.TextShadow(c, "脱轨次数", px + 60, ty, 17, RailPalette.TextSecondary);
-        RailPaint.TextShadow(c, Convert.ToString(g.train != null ? g.train.crashCount : 0),
+        CText.DrawShadowPx(c, "脱轨次数", px + 60, ty, 17, RailPalette.TextSecondary);
+        CText.DrawShadowPx(c, Convert.ToString(g.train != null ? g.train.crashCount : 0),
             px + 250, ty, 17, RailPalette.DangerSoft);
 
         RailPaint.Fill(c, px + 40, py + 264, pw - 80, 1, RailPalette.BrassDim);
-        RailPaint.TextCenteredShadow(c,
+        CText.DrawCenteredShadowPx(c,
             "累计：最高 " + Convert.ToString(g.shell.BestScore())
             + "    送达 " + Convert.ToString(g.shell.TotalDelivered())
             + "    通关 " + Convert.ToString(g.shell.Clears()),
@@ -532,7 +531,7 @@ public class RailView {
             frame = pressed ? 2 : (hover ? 1 : 0);
         }
         if (this.btnSheetPath != "") {
-            RailPaint.NineSliceSrc(c, this.btnSheetPath, b.x, b.y, b.w, b.h,
+            CKitSlice.NineSliceSrc(c, this.btnSheetPath, b.x, b.y, b.w, b.h,
                 frame * RailView.BtnFrameW, 0, RailView.BtnFrameW, RailView.BtnFrameH,
                 RailView.BtnBorder);
         } else {
@@ -544,7 +543,7 @@ public class RailView {
         int text = RailPalette.TextPrimary;
         if (!b.enabled) { text = RailPalette.TextTertiary; }
         if (b.kind == 1 && b.enabled) { text = RailPalette.TextInverse; }
-        RailPaint.TextCenteredShadow(c, b.label, b.x + b.w / 2,
+        CText.DrawCenteredShadowPx(c, b.label, b.x + b.w / 2,
             b.y + (b.h - 20) / 2, 19, text);
     }
 }
