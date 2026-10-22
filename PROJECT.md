@@ -46,7 +46,7 @@
 ## 怎么跑
 
 ```powershell
-$env:ZAN_HOME = 'D:/project/zan-lang'      # 编译器与 stdlib 同源；公共包在它 packages/ 下
+$env:ZAN_HOME = 'D:/path/to/zan-lang'      # 编译器与 stdlib 同源；公共包在它 packages/ 下
 pwsh -File client/tools/build.ps1           # → build/rail/Rail.exe
 pwsh -File client/tools/test.ps1            # 三段：玩法断言 / 存档两遍 / 无头冒烟
 ```
@@ -56,8 +56,8 @@ pwsh -File client/tools/test.ps1            # 三段：玩法断言 / 存档两�
 公共包一改就追不上）：
 
 ```powershell
-pwsh -File client/tools/build.ps1 -Compiler D:/project/zan-lang/build/zanc.exe `
-    -PackageProject D:/project/zan-lang
+pwsh -File client/tools/build.ps1 -Compiler "$env:ZAN_HOME/build/zanc.exe" `
+    -PackageProject "$env:ZAN_HOME"
 ```
 
 ### 皮肤基线：为什么 exe 旁不摆 base.css
@@ -69,7 +69,7 @@ base.css 替身**时才跳过自动内嵌）。运行时 `Skin.BaseCss()` 是**�
 "内嵌兜底到底生效没有"这件事就永远测不出来。
 
 因此 `build.ps1` 只拷**自己的**皮肤包（`skins/rail/skin.css`），不拷基线，并主动
-清掉输出目录里遗留的旧 `skins/base.css`。样板照 `D:/project/games/voxel/client/
+清掉输出目录里遗留的旧 `skins/base.css`。样板照 `voxel 仓库/client/
 tools/build.ps1`。
 
 ### 环境变量
